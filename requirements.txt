@@ -1,0 +1,4 @@
+requirements.txtgradio
+google-generativeai
+requests
+apscheduler
