@@ -5,6 +5,7 @@ import hashlib
 import secrets
 import sqlite3
 import requests
+import spaces
 from datetime import datetime
 from apscheduler.schedulers.background import BackgroundScheduler
 
@@ -319,9 +320,12 @@ def send_warnings_and_notify():
     except Exception as e:
         print(f"Warning job error: {e}")
 
-scheduler = BackgroundScheduler()
-scheduler.add_job(func=send_warnings_and_notify, trigger="interval", hours=24)
-scheduler.start()
+try:
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(func=send_warnings_and_notify, trigger="interval", hours=24)
+    scheduler.start()
+except Exception as e:
+    print(f"Scheduler error: {e}")
 
 # ============ AGENT TOOLS ============
 def check_liveness(user_email):
@@ -559,6 +563,7 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         note = f"## Notification from {owner_name}\n\n**To {row['notifier_name']} ({row['notifier_role']}):**\n\n{row['personal_note']}\n\n---\n*{owner_name} has passed away. This is their message to you. You do not have access to their private vault.*"
         return "Notification received.", note
 
+    @spaces.GPU
     def do_chat(msg, hist, email, sess):
         if not email:
             hist.append((msg, "Please log in first."))
@@ -603,6 +608,7 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         if not email: return "Please log in."
         return get_status(email)
 
+    @spaces.GPU
     def do_proof_chat(msg, hist, email):
         if not email:
             hist.append((msg, "Please log in."))
