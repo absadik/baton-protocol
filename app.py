@@ -126,11 +126,11 @@ def get_status(email):
     if u["is_dead"]:
         return "DECEASED (flagged)"
     days = (datetime.now() - datetime.fromisoformat(u["last_login"])).days
-    if days <= 60: return f"SAFE — {days} days since check-in"
-    if days <= 75: return f"WARNING 1 — {days} days. Please check in."
-    if days <= 85: return f"WARNING 2 — {days} days. Check in soon!"
-    if days < 90: return f"CRITICAL — {90 - days} days until inheritance!"
-    return f"TRIGGERED — {days} days"
+    if days <= 60: return f"SAFE - {days} days since check-in"
+    if days <= 75: return f"WARNING 1 - {days} days. Please check in."
+    if days <= 85: return f"WARNING 2 - {days} days. Check in soon!"
+    if days < 90: return f"CRITICAL - {90 - days} days until inheritance!"
+    return f"TRIGGERED - {days} days"
 
 # ============ VAULT ============
 def add_vault(owner, cat, label, secret):
@@ -374,14 +374,16 @@ def make_chat():
     return model.start_chat(enable_automatic_function_calling=True)
 
 # ============ UI ============
-with gr.Blocks(title="Baton — Agent Inheritance") as demo:
+with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     gr.Markdown("# 🏛️ Baton")
     gr.Markdown("*Your agents don't drop when you do.*")
 
     email_state = gr.State("")
+    name_state = gr.State("")
     chat_state = gr.State(None)
 
-    with gr.Tab("Login / Register"):
+    # -------- LOGIN / REGISTER (always visible) --------
+    with gr.Tab("🔐 Login / Register") as login_tab:
         with gr.Row():
             with gr.Column():
                 gr.Markdown("### Login")
@@ -397,9 +399,14 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
                 rg_btn = gr.Button("Register", variant="primary")
                 rg_msg = gr.Textbox(label="Status", interactive=False)
 
-    with gr.Tab("❤️ I Am Alive"):
-        gr.Markdown("### Confirm you are alive to prevent false inheritance")
-        alive_status = gr.Markdown("Status: please log in.")
+    # -------- DASHBOARD (only after login) --------
+    with gr.Tab("🏠 Dashboard", visible=False) as dashboard_tab:
+        dash_welcome = gr.Markdown("Welcome!")
+        dash_status = gr.Markdown("Status: -")
+
+    with gr.Tab("❤️ I Am Alive", visible=False) as alive_tab:
+        gr.Markdown("### Confirm you are alive")
+        alive_status = gr.Markdown("Status: -")
         alive_btn = gr.Button("❤️ I Am Alive (Check In)", variant="primary", size="lg")
         alive_msg = gr.Textbox(label="Result", interactive=False)
         gr.Markdown("### Or chat to prove you are alive")
@@ -407,7 +414,7 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         proof_input = gr.Textbox(label="Say 'I am alive' or 'Ina raye'")
         proof_btn = gr.Button("Send")
 
-    with gr.Tab("Vault (Secrets)"):
+    with gr.Tab("🔐 Vault (Secrets)", visible=False) as vault_tab:
         gr.Markdown("### Store passwords and secrets")
         v_cat = gr.Dropdown(["Social Media", "Banking", "Email", "Crypto", "Other"], label="Category", value="Social Media")
         v_label = gr.Textbox(label="Label")
@@ -416,21 +423,21 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         v_list = gr.Dataframe(headers=["Category", "Label", "Secret"])
         v_msg = gr.Textbox(label="Status", interactive=False)
 
-    with gr.Tab("Testament"):
+    with gr.Tab("📜 Testament", visible=False) as t_tab:
         gr.Markdown("### Your official will")
         t_title = gr.Textbox(label="Title")
         t_content = gr.Textbox(label="Content", lines=6)
         t_save = gr.Button("Save Testament", variant="primary")
         t_display = gr.Markdown("No testament yet.")
 
-    with gr.Tab("👨‍👩‍👧 Family Message (to ALL)"):
+    with gr.Tab("👨‍👩‍👧 Family Message", visible=False) as fm_tab:
         gr.Markdown("### ONE message for ALL heirs")
         fm_title = gr.Textbox(label="Title")
         fm_content = gr.Textbox(label="Message", lines=6)
         fm_save = gr.Button("Save Family Message", variant="primary")
         fm_display = gr.Markdown("No family message yet.")
 
-    with gr.Tab("💌 Personal Message"):
+    with gr.Tab("💌 Personal Message", visible=False) as pm_tab:
         gr.Markdown("### Different message for each heir")
         pm_heir = gr.Dropdown(label="Choose heir", choices=[], interactive=True)
         pm_content = gr.Textbox(label="Message", lines=5)
@@ -439,7 +446,7 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         pm_msg = gr.Textbox(label="Status", interactive=False)
         pm_all = gr.Dataframe(headers=["Heir", "Message"])
 
-    with gr.Tab("Heirs"):
+    with gr.Tab("👥 Heirs", visible=False) as h_tab:
         gr.Markdown("### Add heirs (children, spouse, mother, father)")
         h_name = gr.Textbox(label="Full Name")
         h_role = gr.Dropdown(
@@ -451,9 +458,8 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         h_list = gr.Dataframe(headers=["Name", "Relationship", "Contact", "Code", "Status"])
         h_msg = gr.Textbox(label="Status", interactive=False)
 
-    with gr.Tab("🤝 Notifiers (Witnesses)"):
+    with gr.Tab("🤝 Notifiers", visible=False) as n_tab:
         gr.Markdown("### People to NOTIFY of your death (they see ONLY a note, no secrets)")
-        gr.Markdown("*Examples: Lawyer, Imam, Pastor, Doctor, Friend*")
         n_name = gr.Textbox(label="Their Name")
         n_role = gr.Dropdown(["Lawyer", "Imam", "Pastor", "Doctor", "Friend", "Other"], label="Role", value="Imam")
         n_contact = gr.Textbox(label="Contact (email/phone)")
@@ -462,17 +468,17 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         n_list = gr.Dataframe(headers=["Name", "Role", "Contact", "Code", "Status"])
         n_msg = gr.Textbox(label="Status", interactive=False)
 
-    with gr.Tab("Chat with Baton"):
-        chatbot = gr.Chatbot(label="Baton", height=350)
+    with gr.Tab("💬 Chat with Baton", visible=False) as chat_tab:
+        chatbot = gr.Chatbot(label="Baton", height=350, type="messages")
         chat_in = gr.Textbox(label="Message")
         chat_btn = gr.Button("Send", variant="primary")
 
-    with gr.Tab("💀 Simulate Death"):
+    with gr.Tab("💀 Simulate Death", visible=False) as sim_tab:
         gr.Markdown("### Flag your account as deceased (demo control)")
         sim_btn = gr.Button("Simulate Death", variant="stop")
         sim_msg = gr.Textbox(label="Result", interactive=False)
 
-    with gr.Tab("🔑 Heir Access Portal"):
+    with gr.Tab("🔑 Heir Access Portal", visible=False) as hc_tab:
         gr.Markdown("### Enter your access code to unlock inheritance")
         hc_code = gr.Textbox(label="Access Code")
         hc_btn = gr.Button("Unlock", variant="primary")
@@ -482,7 +488,7 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         hc_test = gr.Markdown("No testament.")
         hc_vault = gr.Dataframe(headers=["Category", "Label", "Secret"])
 
-    with gr.Tab("🕊️ Notifier Portal"):
+    with gr.Tab("🕊️ Notifier Portal", visible=False) as nc_tab:
         gr.Markdown("### Witnesses enter their code here (see ONLY their note)")
         nc_code = gr.Textbox(label="Notification Code")
         nc_btn = gr.Button("View Notification", variant="primary")
@@ -493,9 +499,17 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
     def do_login(email, pw):
         u = verify_user(email, pw)
         if not u:
-            return "Invalid credentials.", ""
+            return ("Invalid credentials.", "", "", 
+                    gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
+                    gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
+                    gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
+                    gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
         touch_login(email)
-        return f"Welcome, {u['name']}!", email
+        status = get_status(email)
+        welcome = f"# 👋 Welcome, {u['name']}!\n\n**Your Baton account is active.**\n\nStatus: {status}\n\nUse the tabs above to manage your digital legacy."
+        vis = gr.update(visible=True)
+        return (f"Welcome, {u['name']}!", email, welcome,
+                vis, vis, vis, vis, vis, vis, vis, vis, vis, vis, vis, vis)
 
     def do_register(name, email, pw):
         if not name or not email or not pw:
@@ -566,15 +580,15 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
     @spaces.GPU
     def do_chat(msg, hist, email, sess):
         if not email:
-            hist.append((msg, "Please log in first."))
+            hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": "Please log in first."}]
             return hist, ""
         if sess is None:
             sess = make_chat()
         try:
             r = sess.send_message(msg)
-            hist.append((msg, r.text))
+            hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": r.text}]
         except Exception as e:
-            hist.append((msg, f"Error: {e}"))
+            hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": f"Error: {e}"}]
         return hist, ""
 
     def do_simulate_death(email):
@@ -586,17 +600,17 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         if heirs:
             lines.append("HEIRS (full access):")
             for h in heirs:
-                lines.append(f"  {h[0]} ({h[1]}) — Code: {h[3]}")
+                lines.append(f"  {h[0]} ({h[1]}) - Code: {h[3]}")
                 if h[2] and "@" in h[2]:
                     send_email(h[2], f"Baton: Inheritance for {email}",
                                f"<h2>Hello {h[0]},</h2><p>Access code: <b>{h[3]}</b></p>")
         if notifiers:
             lines.append("\nWITNESSES (view-only note):")
             for n in notifiers:
-                lines.append(f"  {n[0]} ({n[1]}) — Code: {n[3]}")
+                lines.append(f"  {n[0]} ({n[1]}) - Code: {n[3]}")
                 if n[2] and "@" in n[2]:
                     send_email(n[2], f"Baton: Notification for {email}",
-                               f"<h2>Hello {n[0]},</h2><p>Notification code: <b>{n[3]}</b></p>")
+                               f"<h2>Hello {n[0]},</h2><p>Code: <b>{n[3]}</b></p>")
         return "\n".join(lines)
 
     def do_checkin(email):
@@ -611,7 +625,7 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
     @spaces.GPU
     def do_proof_chat(msg, hist, email):
         if not email:
-            hist.append((msg, "Please log in."))
+            hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": "Please log in."}]
             return hist, ""
         alive_words = ["alive", "here", "fine", "ok", "yes", "i am", "neya", "ina raye", "lafiya"]
         if any(w in msg.lower() for w in alive_words):
@@ -619,7 +633,7 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
             reply = "Confirmed ALIVE. Check-in recorded."
         else:
             reply = "Say 'I am alive' or 'Ina raye' to prove it."
-        hist.append((msg, reply))
+        hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": reply}]
         return hist, ""
 
     def do_heir_unlock(code):
@@ -636,8 +650,16 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
         test_md = f"## Testament\n\n{test[0]['content']}" if test else "*No testament.*"
         return f"Access granted. Welcome, {heir_name}.", personal_md, family_md, test_md, vault_rows
 
-    li_btn.click(do_login, [li_email, li_pw], [li_msg, email_state])
+    # ===== CONNECT EVENTS =====
+    all_tabs = [dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab, pm_tab, h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab]
+
+    li_btn.click(
+        do_login,
+        [li_email, li_pw],
+        [li_msg, email_state, dash_welcome, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab, pm_tab, h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab]
+    )
     rg_btn.click(do_register, [rg_name, rg_email, rg_pw], rg_msg)
+
     v_add.click(do_add_vault, [email_state, v_cat, v_label, v_secret], [v_list, v_msg])
     email_state.change(refresh_vault, [email_state], [v_list])
     t_save.click(do_save_testament, [email_state, t_title, t_content], [t_display])
@@ -657,6 +679,7 @@ with gr.Blocks(title="Baton — Agent Inheritance") as demo:
     hc_btn.click(do_heir_unlock, [hc_code], [hc_msg, hc_personal, hc_family, hc_test, hc_vault])
     nc_btn.click(do_notifier_view, [nc_code], [nc_msg, nc_note])
     email_state.change(refresh_status, [email_state], [alive_status])
+    email_state.change(refresh_status, [email_state], [dash_status])
     alive_btn.click(do_checkin, [email_state], [alive_msg])
     proof_btn.click(do_proof_chat, [proof_input, proof_chat, email_state], [proof_chat, proof_input])
     proof_input.submit(do_proof_chat, [proof_input, proof_chat, email_state], [proof_chat, proof_input])
