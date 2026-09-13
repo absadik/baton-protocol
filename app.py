@@ -19,7 +19,6 @@ DB_PATH = "baton.db"
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
-# ============ EMAIL ============
 def send_email(to_email, subject, html_body):
     if not RESEND_API_KEY:
         return False, "RESEND_API_KEY not set"
@@ -34,7 +33,6 @@ def send_email(to_email, subject, html_body):
     except Exception as e:
         return False, str(e)
 
-# ============ DATABASE ============
 def get_db():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
     conn.row_factory = sqlite3.Row
@@ -77,14 +75,13 @@ init_db()
 def hash_pw(pw):
     return hashlib.sha256(pw.encode()).hexdigest()
 
-# ============ USERS ============
 def create_user(email, password, name):
     conn = get_db()
     try:
         conn.execute("INSERT INTO users (email, password_hash, name, last_login) VALUES (?, ?, ?, ?)",
                      (email, hash_pw(password), name, datetime.now().isoformat()))
         conn.commit()
-        return True, "Account created!"
+        return True, "Account created! Please log in below."
     except sqlite3.IntegrityError:
         return False, "Email already registered."
     finally:
@@ -133,7 +130,6 @@ def get_status(email):
     if days < 90: return f"CRITICAL - {90 - days} days until inheritance!"
     return f"TRIGGERED - {days} days"
 
-# ============ VAULT ============
 def add_vault(owner, cat, label, secret):
     conn = get_db()
     conn.execute("INSERT INTO vault (owner_email, category, label, secret, created_at) VALUES (?, ?, ?, ?, ?)",
@@ -147,7 +143,6 @@ def get_vault(owner):
     conn.close()
     return [[r["category"], r["label"], r["secret"]] for r in rows]
 
-# ============ TESTAMENT ============
 def save_testament(owner, title, content):
     conn = get_db()
     existing = conn.execute("SELECT id FROM testament WHERE owner_email = ? LIMIT 1", (owner,)).fetchone()
@@ -163,12 +158,12 @@ def save_testament(owner, title, content):
 
 def get_testaments(owner):
     conn = get_db()
-    r = conn.execute("SELECT title, content, updated_at FROM testament WHERE owner_email = ? ORDER BY updated_at DESC LIMIT 1",
+    r = conn.execute("SELECT title, content FROM testament WHERE owner_email = ? ORDER BY updated_at DESC LIMIT 1",
                      (owner,)).fetchone()
     conn.close()
     if not r:
         return "No testament yet."
-    return f"## {r['title']}\n\n{r['content']}\n\n---\nLast updated: {r['updated_at'][:19]}"
+    return f"## {r['title']}\n\n{r['content']}"
 
 def load_testament_for_edit(owner):
     if not owner:
@@ -178,10 +173,9 @@ def load_testament_for_edit(owner):
                      (owner,)).fetchone()
     conn.close()
     if not r:
-        return "", "", "No existing testament. Write a new one below and click Save."
-    return r["title"], r["content"], "Loaded! You can now edit and click Save."
+        return "", "", "No existing testament. Write one below and click Save."
+    return r["title"], r["content"], "Loaded! Edit and click Save."
 
-# ============ HEIRS ============
 def add_heir(owner, name, relation, contact):
     code = secrets.token_hex(4).upper()
     conn = get_db()
@@ -219,7 +213,6 @@ def heir_login(code):
     conn.close()
     return row, "OK"
 
-# ============ FAMILY / PERSONAL MESSAGES ============
 def save_family_message(owner, title, content):
     conn = get_db()
     existing = conn.execute("SELECT id FROM family_message WHERE owner_email = ? LIMIT 1", (owner,)).fetchone()
@@ -262,7 +255,6 @@ def get_personal_message(owner, heir_name):
     conn.close()
     return r["content"] if r else None
 
-# ============ NOTIFIERS ============
 def add_notifier(owner, name, role, contact, note):
     code = secrets.token_hex(4).upper()
     conn = get_db()
@@ -302,7 +294,6 @@ def get_deceased_info(owner):
     conn.close()
     return vault, test, fam
 
-# ============ AUTO WARNINGS ============
 def send_warnings_and_notify():
     try:
         conn = get_db()
@@ -324,21 +315,12 @@ def send_warnings_and_notify():
                                        (email, level)).fetchone()
                 if not already:
                     send_email(email, f"Baton Warning: {level}",
-                               f"<h2>Hello {name},</h2><p>You have not checked in for {days} days. Please log in and tap I Am Alive.</p>")
+                               f"<h2>Hello {name},</h2><p>You have not checked in for {days} days.</p>")
                     conn2 = get_db()
                     conn2.execute("INSERT INTO warnings (owner_email, level, sent_at) VALUES (?, ?, ?)",
                                   (email, level, datetime.now().isoformat()))
                     conn2.commit()
                     conn2.close()
-                    if level == "90_day":
-                        for h in get_heirs(email):
-                            if h[2] and "@" in h[2]:
-                                send_email(h[2], f"Baton: Inheritance for {name}",
-                                           f"<h2>Hello {h[0]},</h2><p>Access code: <b>{h[3]}</b></p>")
-                        for n in get_notifiers(email):
-                            if n[2] and "@" in n[2]:
-                                send_email(n[2], f"Baton: Notification for {name}",
-                                           f"<h2>Hello {n[0]},</h2><p>Code: <b>{n[3]}</b></p>")
                 conn.close()
     except Exception as e:
         print(f"Warning job error: {e}")
@@ -350,7 +332,6 @@ try:
 except Exception as e:
     print(f"Scheduler error: {e}")
 
-# ============ AGENT TOOLS ============
 def check_liveness(user_email):
     conn = get_db()
     u = conn.execute("SELECT last_login, is_dead FROM users WHERE email = ?", (user_email,)).fetchone()
@@ -400,16 +381,46 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     email_state = gr.State("")
     chat_state = gr.State(None)
 
+    # WELCOME BANNER — visible when NOT logged in
+    welcome_banner = gr.Markdown(
+        "## 👋 Welcome to Baton!\n\n"
+        "**Baton** is the inheritance protocol for autonomous AI agents. "
+        "When you pass away, your AI agents — and your secrets, messages, and wishes — "
+        "are safely transferred to the people you choose.\n\n"
+        "### 🚀 Getting Started\n"
+        "1. **Register** with your name, email, and password (below)\n"
+        "2. **Log in** with your credentials\n"
+        "3. Use the tabs to set up your legacy\n\n"
+        "### 📖 What Each Tab Does\n"
+        "| Tab | Purpose |\n"
+        "|---|---|\n"
+        "| 🔐 Login / Register | Create account or log in |\n"
+        "| 🏠 Dashboard | Your control center |\n"
+        "| ❤️ I Am Alive | Confirm you are alive |\n"
+        "| 🔐 Vault | Store passwords and secrets |\n"
+        "| 📜 Testament | Write your official will |\n"
+        "| 👨‍👩‍👧 Family Message | One message for all heirs |\n"
+        "| 💌 Personal Message | Individual message for each heir |\n"
+        "| 👥 Heirs | Add children, spouse, parents |\n"
+        "| 🤝 Notifiers | Add witnesses (lawyer, imam, doctor) |\n"
+        "| 💬 Chat with Baton | Talk to the AI assistant |\n"
+        "| 💀 Simulate Death | Demo: see inheritance in action |\n"
+        "| 🔑 Heir Access Portal | Heirs enter their code |\n"
+        "| 🕊️ Notifier Portal | Witnesses enter their code |\n\n"
+        "---"
+    )
+
     with gr.Tab("🔐 Login / Register") as login_tab:
         with gr.Row():
             with gr.Column():
-                gr.Markdown("### Login")
+                gr.Markdown("### 🔐 Login")
                 li_email = gr.Textbox(label="Email")
                 li_pw = gr.Textbox(label="Password", type="password")
                 li_btn = gr.Button("Log in", variant="primary")
                 li_msg = gr.Textbox(label="Status", interactive=False)
             with gr.Column():
-                gr.Markdown("### Register")
+                gr.Markdown("### 📝 Register")
+                gr.Markdown("*New here? Create an account.*")
                 rg_name = gr.Textbox(label="Name")
                 rg_email = gr.Textbox(label="Email")
                 rg_pw = gr.Textbox(label="Password", type="password")
@@ -418,11 +429,33 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
 
     with gr.Tab("🏠 Dashboard", visible=False) as dashboard_tab:
         dash_welcome = gr.Markdown("Welcome!")
+        gr.Markdown("---")
+        gr.Markdown(
+            "### 📖 Quick Guide — What Each Tab Does\n\n"
+            "| Tab | Purpose |\n"
+            "|---|---|\n"
+            "| ❤️ I Am Alive | Confirm you are alive to prevent false inheritance |\n"
+            "| 🔐 Vault | Store passwords, PINs, and secrets |\n"
+            "| 📜 Testament | Write your official will (wasiyya) |\n"
+            "| 👨‍👩‍👧 Family Message | One message that goes to ALL heirs |\n"
+            "| 💌 Personal Message | Different message for each heir |\n"
+            "| 👥 Heirs | Add your children, spouse, mother, father |\n"
+            "| 🤝 Notifiers | Add witnesses who only get a note (no secrets) |\n"
+            "| 💬 Chat with Baton | Talk to the AI assistant |\n"
+            "| 💀 Simulate Death | Demo: see what happens after death |\n"
+            "| 🔑 Heir Access Portal | Heirs enter their access code here |\n"
+            "| 🕊️ Notifier Portal | Witnesses enter their code here |"
+        )
+        gr.Markdown("---")
+        gr.Markdown("### 🚪 When you are finished")
+        logout_btn = gr.Button("🚪 Log out", variant="stop")
+        logout_msg = gr.Textbox(label="Status", interactive=False)
 
     with gr.Tab("❤️ I Am Alive", visible=False) as alive_tab:
         gr.Markdown("### Confirm you are alive")
+        gr.Markdown("*Danna maɓallin 'I Am Alive' kowane lokaci don tabbatar da kana raye.*")
         alive_status = gr.Markdown("Status: -")
-        alive_btn = gr.Button("I Am Alive (Check In)", variant="primary", size="lg")
+        alive_btn = gr.Button("❤️ I Am Alive (Check In)", variant="primary", size="lg")
         alive_msg = gr.Textbox(label="Result", interactive=False)
 
     with gr.Tab("🔐 Vault (Secrets)", visible=False) as vault_tab:
@@ -436,14 +469,14 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
 
     with gr.Tab("📜 Testament", visible=False) as t_tab:
         gr.Markdown("### Your official will (wasiyya)")
-        gr.Markdown("Tip: Idan ka riga ka rubuta wasiyya, danna Load my testament don ka gyara ta. Idan ba ka rubuta ba, rubuta sabo sannan ka danna Save.")
-        t_load = gr.Button("Load my testament", variant="secondary")
+        gr.Markdown("Tip: If you already wrote a testament, click Load my testament to edit it. If not, write a new one and click Save.")
+        t_load = gr.Button("📥 Load my testament", variant="secondary")
         t_title = gr.Textbox(label="Title (Take)")
         t_content = gr.Textbox(label="Content (Abin da ka rubuta)", lines=8)
-        t_save = gr.Button("Save Testament (Ajiye)", variant="primary")
+        t_save = gr.Button("💾 Save Testament (Ajiye)", variant="primary")
         t_status = gr.Textbox(label="Status", interactive=False)
         gr.Markdown("---")
-        gr.Markdown("### Current Testament (Abin da ke ajiye yanzu)")
+        gr.Markdown("### Current Testament")
         t_display = gr.Markdown("No testament yet.")
 
     with gr.Tab("👨‍👩‍👧 Family Message", visible=False) as fm_tab:
@@ -458,7 +491,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         pm_heir = gr.Dropdown(label="Choose heir", choices=[], interactive=True)
         pm_content = gr.Textbox(label="Message", lines=5)
         pm_save = gr.Button("Save Personal Message", variant="primary")
-        pm_refresh = gr.Button("Refresh heir list")
+        pm_refresh = gr.Button("🔄 Refresh heir list")
         pm_msg = gr.Textbox(label="Status", interactive=False)
         pm_all = gr.Dataframe(headers=["Heir", "Message"])
 
@@ -515,29 +548,42 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     def do_login(email, pw):
         u = verify_user(email, pw)
         vis_off = gr.update(visible=False)
+        vis_on = gr.update(visible=True)
+        banner_off = gr.update(visible=False)
         if not u:
-            return ("Invalid credentials.", "", vis_off, vis_off, vis_off, vis_off, vis_off,
-                    vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, "Please try again.")
+            return ("❌ Invalid credentials. Please try again.", "", vis_on, vis_off, vis_off, vis_off,
+                    vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off,
+                    "Please try again.", gr.update(visible=True))
         touch_login(email)
         status = get_status(email)
-        welcome = f"# Welcome, {u['name']}!\n\nYour Baton account is active.\n\nStatus: {status}\n\nUse the tabs above to manage your digital legacy."
-        vis_on = gr.update(visible=True)
-        return (f"Welcome, {u['name']}!", email, vis_on, vis_on, vis_on, vis_on, vis_on,
-                vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, welcome)
+        welcome = (f"# 👋 Welcome, {u['name']}!\n\n"
+                   f"**Your Baton account is active.**\n\n"
+                   f"**Status:** {status}\n\n"
+                   f"Use the tabs above to manage your digital legacy. "
+                   f"Click **🚪 Log out** when you are done.")
+        return (f"✅ Welcome, {u['name']}!", email, vis_off, vis_on, vis_on, vis_on, vis_on,
+                vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, welcome, banner_off)
 
     def do_register(name, email, pw):
         if not name or not email or not pw:
-            return "Fill all fields."
+            return "Please fill in all fields."
         if len(pw) < 6:
-            return "Password must be 6+."
+            return "Password must be at least 6 characters."
         ok, msg = create_user(email, pw, name)
         return msg
+
+    def do_logout():
+        vis_on = gr.update(visible=True)
+        vis_off = gr.update(visible=False)
+        banner_on = gr.update(visible=True)
+        return ("✅ Logged out. Please log in again.", "", vis_on, vis_off, vis_off, vis_off, vis_off,
+                vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, banner_on)
 
     def do_add_vault(email, cat, label, secret):
         if not email: return [], "Please log in."
         if not label or not secret: return get_vault(email), "Required."
         add_vault(email, cat, label, secret)
-        return get_vault(email), f"Added {label}."
+        return get_vault(email), f"✅ Added {label}."
 
     def refresh_vault(email): return get_vault(email)
 
@@ -545,7 +591,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         if not email: return "Please log in.", "Please log in."
         if not title or not content: return "Title and content required.", get_testaments(email)
         msg = save_testament(email, title, content)
-        return msg, get_testaments(email)
+        return f"✅ {msg}", get_testaments(email)
 
     def refresh_testament(email): return get_testaments(email)
 
@@ -570,13 +616,13 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         if not email: return "Please log in.", []
         if not heir or not content: return "Choose heir and write.", refresh_pm_table(email)
         save_personal_message(email, heir, content)
-        return f"Saved for {heir}.", refresh_pm_table(email)
+        return f"✅ Saved for {heir}.", refresh_pm_table(email)
 
     def do_add_heir(email, name, role, contact):
         if not email: return [], "Please log in."
         if not name or not contact: return get_heirs(email), "Required."
         code = add_heir(email, name, role, contact)
-        return get_heirs(email), f"Heir added. Code: {code}"
+        return get_heirs(email), f"✅ Heir added. Code: {code}"
 
     def refresh_heirs(email): return get_heirs(email)
 
@@ -584,7 +630,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         if not email: return [], "Please log in."
         if not name or not contact: return get_notifiers(email), "Required."
         code = add_notifier(email, name, role, contact, note)
-        return get_notifiers(email), f"Notifier added. Code: {code}"
+        return get_notifiers(email), f"✅ Notifier added. Code: {code}"
 
     def refresh_notifiers(email): return get_notifiers(email)
 
@@ -592,8 +638,8 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         row, owner_name = notifier_view(code)
         if not row:
             return "Invalid code.", "No notification."
-        note = f"## Notification from {owner_name}\n\nTo {row['notifier_name']} ({row['notifier_role']}):\n\n{row['personal_note']}\n\n---\n{owner_name} has passed away. This is their message to you. You do not have access to their private vault."
-        return "Notification received.", note
+        note = f"## Notification from {owner_name}\n\nTo {row['notifier_name']} ({row['notifier_role']}):\n\n{row['personal_note']}\n\n---\n{owner_name} has passed away. This is their message to you."
+        return "✅ Notification received.", note
 
     @spaces.GPU
     def do_chat(msg, hist, email, sess):
@@ -614,7 +660,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         mark_dead(email)
         heirs = get_heirs(email)
         notifiers = get_notifiers(email)
-        lines = ["Account flagged as deceased.\n"]
+        lines = ["💀 Account flagged as deceased.\n"]
         if heirs:
             lines.append("HEIRS (full access):")
             for h in heirs:
@@ -652,15 +698,23 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         personal_md = f"## Personal Message for {heir_name}\n\n{personal}" if personal else "No personal message."
         family_md = f"## Family Message\n\n{fam[0]['content']}" if fam else "No family message."
         test_md = f"## Testament\n\n{test[0]['content']}" if test else "No testament."
-        return f"Access granted. Welcome, {heir_name}.", personal_md, family_md, test_md, vault_rows
+        return f"✅ Access granted. Welcome, {heir_name}.", personal_md, family_md, test_md, vault_rows
 
     # ===== CONNECT EVENTS =====
     li_btn.click(
         do_login,
         [li_email, li_pw],
-        [li_msg, email_state, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab, pm_tab, h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab, dash_welcome]
+        [li_msg, email_state, login_tab, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab, pm_tab,
+         h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab, dash_welcome, welcome_banner]
     )
     rg_btn.click(do_register, [rg_name, rg_email, rg_pw], rg_msg)
+
+    logout_btn.click(
+        do_logout,
+        [],
+        [logout_msg, email_state, login_tab, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab, pm_tab,
+         h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab, welcome_banner]
+    )
 
     v_add.click(do_add_vault, [email_state, v_cat, v_label, v_secret], [v_list, v_msg])
     email_state.change(refresh_vault, [email_state], [v_list])
