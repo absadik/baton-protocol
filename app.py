@@ -200,7 +200,6 @@ def get_testaments(owner):
         parts.append(f"## {r['title']}\n\n{r['content']}")
     return "\n\n---\n\n".join(parts)
 
-# ===== ATTACHMENTS (FIXED) =====
 def save_attachment(owner, testament_id, file_path, file_type, original_name):
     if not file_path:
         return
@@ -249,7 +248,6 @@ def parse_attachment_choice(choice):
     except Exception:
         return None
 
-# ===== HEIRS =====
 def add_heir(owner, name, relation, contact):
     code = secrets.token_hex(4).upper()
     conn = get_db()
@@ -368,7 +366,6 @@ def get_deceased_info(owner):
     conn.close()
     return vault, fam, [{"path": a["file_path"], "type": a["file_type"], "name": a["original_name"]} for a in atts]
 
-# ===== DASHBOARD STATS =====
 def get_dashboard_stats(email):
     if not email:
         return {"vault": 0, "testaments": 0, "heirs": 0, "notifiers": 0, "attachments": 0}
@@ -384,7 +381,7 @@ def get_dashboard_stats(email):
 def build_dashboard_html(name, email, status, stats):
     return f"""
     <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 10px;">
-        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 15px; margin-bottom: 20px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);">
+        <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 15px; margin-bottom: 20px;">
             <div style="display: flex; align-items: center; gap: 15px;">
                 <div style="width: 60px; height: 60px; background: rgba(255,255,255,0.25); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: bold;">
                     {name[0].upper() if name else "?"}
@@ -401,27 +398,27 @@ def build_dashboard_html(name, email, status, stats):
         
         <h3 style="color: #333; margin: 20px 0 15px 0;">📊 Your Legacy at a Glance</h3>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 25px;">
-            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">🔐</div>
                 <div style="font-size: 26px; font-weight: bold; color: #667eea; margin: 5px 0;">{stats['vault']}</div>
                 <div style="font-size: 13px; color: #666;">Secrets in Vault</div>
             </div>
-            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">📜</div>
                 <div style="font-size: 26px; font-weight: bold; color: #764ba2; margin: 5px 0;">{stats['testaments']}</div>
                 <div style="font-size: 13px; color: #666;">Testaments</div>
             </div>
-            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">👥</div>
                 <div style="font-size: 26px; font-weight: bold; color: #10b981; margin: 5px 0;">{stats['heirs']}</div>
                 <div style="font-size: 13px; color: #666;">Heirs</div>
             </div>
-            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">🤝</div>
                 <div style="font-size: 26px; font-weight: bold; color: #f59e0b; margin: 5px 0;">{stats['notifiers']}</div>
                 <div style="font-size: 13px; color: #666;">Notifiers</div>
             </div>
-            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center; box-shadow: 0 2px 8px rgba(0,0,0,0.04);">
+            <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">📎</div>
                 <div style="font-size: 26px; font-weight: bold; color: #ef4444; margin: 5px 0;">{stats['attachments']}</div>
                 <div style="font-size: 13px; color: #666;">Attachments</div>
@@ -432,11 +429,11 @@ def build_dashboard_html(name, email, status, stats):
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
             <div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 10px;">
                 <div style="font-weight: bold; color: #1e40af;">❤️ I Am Alive</div>
-                <div style="font-size: 13px; color: #666; margin-top: 5px;">Tap to confirm you are alive</div>
+                <div style="font-size: 13px; color: #666; margin-top: 5px;">Confirm you are alive</div>
             </div>
             <div style="background: #f0fdf4; border-left: 4px solid #22c55e; padding: 15px; border-radius: 10px;">
                 <div style="font-weight: bold; color: #15803d;">🔐 Vault</div>
-                <div style="font-size: 13px; color: #666; margin-top: 5px;">Store passwords & secrets</div>
+                <div style="font-size: 13px; color: #666; margin-top: 5px;">Store passwords</div>
             </div>
             <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; border-radius: 10px;">
                 <div style="font-weight: bold; color: #b45309;">📜 Testament</div>
@@ -444,7 +441,7 @@ def build_dashboard_html(name, email, status, stats):
             </div>
             <div style="background: #fce7f3; border-left: 4px solid #ec4899; padding: 15px; border-radius: 10px;">
                 <div style="font-weight: bold; color: #be185d;">💌 Messages</div>
-                <div style="font-size: 13px; color: #666; margin-top: 5px;">Family & personal messages</div>
+                <div style="font-size: 13px; color: #666; margin-top: 5px;">Family & personal</div>
             </div>
             <div style="background: #ede9fe; border-left: 4px solid #8b5cf6; padding: 15px; border-radius: 10px;">
                 <div style="font-weight: bold; color: #6d28d9;">👥 Heirs</div>
@@ -457,12 +454,11 @@ def build_dashboard_html(name, email, status, stats):
         </div>
         
         <div style="margin-top: 25px; padding: 15px; background: #f9fafb; border-radius: 10px; font-size: 13px; color: #666; text-align: center;">
-            💡 <b>Tip:</b> Danna kowanne tab a saman shafin don sarrafa abubuwan da ke ciki.
+            💡 Danna kowanne tab a saman shafin don sarrafa abubuwan da ke ciki.
         </div>
     </div>
     """
 
-# ===== AUTO WARNINGS =====
 def send_warnings_and_notify():
     try:
         conn = get_db()
@@ -765,7 +761,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         if not t: return 0, "", "", ""
         return t["id"], t["title"], t["content"], f"📥 Loaded: {t['title']}"
 
-    # ===== ATTACHMENTS (FIXED for Gradio 6) =====
+    # ===== ATTACHMENTS =====
     def do_attach(file_obj, audio_obj, selected_id, email):
         if not email: return "Please log in.", [], []
         if not selected_id or int(selected_id) == 0: return "Select a testament first.", [], []
@@ -900,10 +896,10 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
          t_list, t_selected_id, t_title, t_content, attach_selector]
     )
     rg_btn.click(do_register, [rg_name, rg_email, rg_pw], rg_msg)
-    logout_btn.click(
+    quick_logout.click(
         do_logout,
         [],
-        [logout_msg, email_state, name_state, login_tab, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab,
+        [li_msg, email_state, name_state, login_tab, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab,
          pm_tab, h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab, welcome_banner, main_tabs]
     )
     quick_alive.click(lambda: goto("alive"), [], [main_tabs])
