@@ -491,16 +491,16 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     # ===== HANDLERS =====
     def do_login(email, pw):
         u = verify_user(email, pw)
+        vis_off = gr.update(visible=False)
         if not u:
-            return ("Invalid credentials.", "", gr.update(visible=False), gr.update(visible=False),
-                    gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
-                    gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
-                    gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
+            return ("Invalid credentials.", "", vis_off, vis_off, vis_off, vis_off, vis_off,
+                    vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, "Please try again.")
         touch_login(email)
         status = get_status(email)
         welcome = f"# 👋 Welcome, {u['name']}!\n\n**Your Baton account is active.**\n\nStatus: {status}\n\nUse the tabs above to manage your digital legacy."
-        vis = gr.update(visible=True)
-        return (f"Welcome, {u['name']}!", email, vis, vis, vis, vis, vis, vis, vis, vis, vis, vis, vis, welcome)
+        vis_on = gr.update(visible=True)
+        return (f"Welcome, {u['name']}!", email, vis_on, vis_on, vis_on, vis_on, vis_on,
+                vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, welcome)
 
     def do_register(name, email, pw):
         if not name or not email or not pw:
