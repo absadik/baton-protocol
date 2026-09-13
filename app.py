@@ -147,22 +147,43 @@ def get_vault(owner):
     conn.close()
     return [[r["category"], r["label"], r["secret"]] for r in rows]
 
-# ============ TESTAMENT ============
+# ============ TESTAMENT (with EDIT feature) ============
 def save_testament(owner, title, content):
+    """Save OR update testament. One testament per user (upsert)."""
     conn = get_db()
-    conn.execute("INSERT INTO testament (owner_email, title, content, updated_at) VALUES (?, ?, ?, ?)",
-                 (owner, title, content, datetime.now().isoformat()))
+    existing = conn.execute("SELECT id FROM testament WHERE owner_email = ? ORDER BY updated_at DESC LIMIT 1",
+                            (owner,)).fetchone()
+    if existing:
+        conn.execute("UPDATE testament SET title = ?, content = ?, updated_at = ? WHERE id = ?",
+                     (title, content, datetime.now().isoformat(), existing["id"]))
+    else:
+        conn.execute("INSERT INTO testament (owner_email, title, content, updated_at) VALUES (?, ?, ?, ?)",
+                     (owner, title, content, datetime.now().isoformat()))
     conn.commit()
     conn.close()
+    return "Testament saved!"
 
 def get_testaments(owner):
+    """Get formatted testament for display."""
     conn = get_db()
-    rows = conn.execute("SELECT title, content FROM testament WHERE owner_email = ? ORDER BY updated_at DESC",
-                        (owner,)).fetchall()
+    r = conn.execute("SELECT title, content, updated_at FROM testament WHERE owner_email = ? ORDER BY updated_at DESC LIMIT 1",
+                     (owner,)).fetchone()
     conn.close()
-    if not rows:
+    if not r:
         return "No testament yet."
-    return "\n---\n".join([f"## {r['title']}\n\n{r['content']}" for r in rows])
+    return f"## {r['title']}\n\n{r['content']}\n\n---\n*Last updated: {r['updated_at'][:19]}*"
+
+def load_testament_for_edit(owner):
+    """Load existing testament into the edit fields."""
+    if not owner:
+        return "", "", "Please log in first."
+    conn = get_db()
+    r = conn.execute("SELECT title, content FROM testament WHERE owner_email = ? ORDER BY updated_at DESC LIMIT 1",
+                     (owner,)).fetchone()
+    conn.close()
+    if not r:
+        return "", "", "No existing testament. Write a new one below and click Save."
+    return r["title"], r["content"], "📥 Loaded! You can now edit and click Save."
 
 # ============ HEIRS ============
 def add_heir(owner, name, relation, contact):
@@ -205,8 +226,13 @@ def heir_login(code):
 # ============ FAMILY / PERSONAL MESSAGES ============
 def save_family_message(owner, title, content):
     conn = get_db()
-    conn.execute("INSERT INTO family_message (owner_email, title, content, updated_at) VALUES (?, ?, ?, ?)",
-                 (owner, title, content, datetime.now().isoformat()))
+    existing = conn.execute("SELECT id FROM family_message WHERE owner_email = ? LIMIT 1", (owner,)).fetchone()
+    if existing:
+        conn.execute("UPDATE family_message SET title = ?, content = ?, updated_at = ? WHERE id = ?",
+                     (title, content, datetime.now().isoformat(), existing["id"]))
+    else:
+        conn.execute("INSERT INTO family_message (owner_email, title, content, updated_at) VALUES (?, ?, ?, ?)",
+                     (owner, title, content, datetime.now().isoformat()))
     conn.commit()
     conn.close()
 
@@ -330,7 +356,6 @@ except Exception as e:
 
 # ============ AGENT TOOLS ============
 def check_liveness(user_email):
-    """Check if the user is still active or if inheritance should trigger."""
     conn = get_db()
     u = conn.execute("SELECT last_login, is_dead FROM users WHERE email = ?", (user_email,)).fetchone()
     conn.close()
@@ -344,15 +369,12 @@ def check_liveness(user_email):
     return {"status": "active", "days": days}
 
 def transfer_agent(user_email, agent_name):
-    """Transfer a digital agent to its designated heir."""
     return {"status": "success", "agent": agent_name, "heir": "designated"}
 
 def archive_agent(user_email, agent_name):
-    """Archive an agent with a cryptographic seal."""
     return {"status": "success", "seal_id": f"SEAL-{int(time.time())}"}
 
 def decommission_agent(user_email, agent_name):
-    """Revoke access keys for an agent."""
     return {"status": "success", "final_log": "keys revoked"}
 
 SYSTEM_PROMPT = """You are Baton, an inheritance protocol for AI agents and digital assets.
@@ -417,10 +439,15 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         v_msg = gr.Textbox(label="Status", interactive=False)
 
     with gr.Tab("📜 Testament", visible=False) as t_tab:
-        gr.Markdown("### Your official will")
-        t_title = gr.Textbox(label="Title")
-        t_content = gr.Textbox(label="Content", lines=6)
-        t_save = gr.Button("Save Testament", variant="primary")
+        gr.Markdown("### Your official will (wasiyya)")
+        gr.Markdown("*💡 **Tip:** Idan ka riga ka rubuta wasiyya, danna **'📥 Load my testament'** don ka gyara ta. Idan ba ka rubuta ba, rubuta sabo sannan ka danna 'Save'."*")
+        t_load = gr.Button("📥 Load my testament (Load existing)", variant="secondary")
+        t_title = gr.Textbox(label="Title (Take)")
+        t_content = gr.Textbox(label="Content (Abin da ka rubuta)", lines=8)
+        t_save = gr.Button("💾 Save Testament (Ajiye)", variant="primary")
+        t_status = gr.Textbox(label="Status", interactive=False)
+        gr.Markdown("---")
+        gr.Markdown("### 📖 Current Testament (Abin da ke ajiye yanzu)")
         t_display = gr.Markdown("No testament yet.")
 
     with gr.Tab("👨‍👩‍👧 Family Message", visible=False) as fm_tab:
@@ -519,12 +546,16 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     def refresh_vault(email): return get_vault(email)
 
     def do_save_testament(email, title, content):
-        if not email: return "Please log in."
-        if not title or not content: return "Required."
-        save_testament(email, title, content)
-        return get_testaments(email)
+        if not email: return "Please log in.", "Please log in."
+        if not title or not content: return "Title and content required.", get_testaments(email)
+        msg = save_testament(email, title, content)
+        return msg, get_testaments(email)
 
     def refresh_testament(email): return get_testaments(email)
+
+    def do_load_testament(email):
+        title, content, msg = load_testament_for_edit(email)
+        return title, content, msg
 
     def do_save_family(email, title, content):
         if not email: return "Please log in."
@@ -637,8 +668,11 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
 
     v_add.click(do_add_vault, [email_state, v_cat, v_label, v_secret], [v_list, v_msg])
     email_state.change(refresh_vault, [email_state], [v_list])
-    t_save.click(do_save_testament, [email_state, t_title, t_content], [t_display])
+
+    t_load.click(do_load_testament, [email_state], [t_title, t_content, t_status])
+    t_save.click(do_save_testament, [email_state, t_title, t_content], [t_status, t_display])
     email_state.change(refresh_testament, [email_state], [t_display])
+
     fm_save.click(do_save_family, [email_state, fm_title, fm_content], [fm_display])
     email_state.change(refresh_family, [email_state], [fm_display])
     pm_refresh.click(refresh_heir_dropdown, [email_state], [pm_heir])
