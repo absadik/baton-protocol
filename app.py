@@ -462,7 +462,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         n_msg = gr.Textbox(label="Status", interactive=False)
 
     with gr.Tab("💬 Chat with Baton", visible=False) as chat_tab:
-        chatbot = gr.Chatbot(label="Baton", height=350, type="messages")
+        chatbot = gr.Chatbot(label="Baton", height=350)
         chat_in = gr.Textbox(label="Message")
         chat_btn = gr.Button("Send", variant="primary")
 
@@ -612,20 +612,6 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     def refresh_status(email):
         if not email: return "Please log in."
         return get_status(email)
-
-    @spaces.GPU
-    def do_proof_chat(msg, hist, email):
-        if not email:
-            hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": "Please log in."}]
-            return hist, ""
-        alive_words = ["alive", "here", "fine", "ok", "yes", "i am", "neya", "ina raye", "lafiya"]
-        if any(w in msg.lower() for w in alive_words):
-            check_in(email)
-            reply = "Confirmed ALIVE. Check-in recorded."
-        else:
-            reply = "Say 'I am alive' or 'Ina raye' to prove it."
-        hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": reply}]
-        return hist, ""
 
     def do_heir_unlock(code):
         row, msg = heir_login(code)
