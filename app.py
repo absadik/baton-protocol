@@ -1,6 +1,6 @@
 import gradio as gr
 import os
-import time
+import secrets
 import hashlib
 import secrets
 import sqlite3
@@ -546,16 +546,33 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     email_state = gr.State("")
     name_state = gr.State("")
     chat_state = gr.State(None)
-
-    welcome_banner = gr.Markdown(
-        "## 👋 Welcome to Baton!\n\n"
-        "**Baton** shine ka'idar gado don agents na AI masu zaman kansu.\n\n"
-        "### 🚀 Yadda za ka fara\n"
-        "1. **Yi rijista** da suna, imel, da kalmar sirri\n"
-        "2. **Shiga** da bayananka\n"
-        "3. Yi amfani da tabs don tsara gadonka\n\n"
-        "---"
-    )
+welcome_banner = gr.Markdown(
+    "## 👋 Welcome to Baton!\n\n"
+    "**Baton** is the inheritance protocol for autonomous AI agents. "
+    "When you pass away, your AI agents — and your secrets, messages, and wishes — "
+    "are safely transferred to the people you choose.\n\n"
+    "### 🚀 Getting Started\n"
+    "1. **Register** with your name, email, and password\n"
+    "2. **Log in** with your credentials\n"
+    "3. Use the tabs at the top to set up your legacy\n\n"
+    "### 📖 What Each Tab Does\n"
+    "| Tab | Purpose |\n"
+    "|---|---|\n"
+    "| 🔐 Login / Register | Create account or log in |\n"
+    "| 🏠 Dashboard | Your control center |\n"
+    "| ❤️ I Am Alive | Confirm you are alive |\n"
+    "| 🔐 Vault | Store passwords and secrets |\n"
+    "| 📜 Testament | Write multiple wills (like Google Docs) |\n"
+    "| 👨‍👩‍👧 Family Message | One message for all heirs |\n"
+    "| 💌 Personal Message | Individual message for each heir |\n"
+    "| 👥 Heirs | Add children, spouse, parents |\n"
+    "| 🤝 Notifiers | Add witnesses (lawyer, imam, doctor) |\n"
+    "| 💬 Chat | Talk to the AI assistant |\n"
+    "| 💀 Simulate Death | Demo: see inheritance in action |\n"
+    "| 🔑 Heir Portal | Heirs enter their code |\n"
+    "| 🕊️ Notifier Portal | Witnesses enter their code |\n\n"
+    "---"
+)
 
     with gr.Tabs() as main_tabs:
         with gr.Tab("🔐 Login / Register", id="login") as login_tab:
