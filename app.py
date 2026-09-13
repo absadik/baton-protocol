@@ -16,7 +16,8 @@ RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
 FROM_EMAIL = os.environ.get("FROM_EMAIL", "onboarding@resend.dev")
 DB_PATH = "baton.db"
 
-genai.configure(api_key=GEMINI_API_KEY)
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 # ============ EMAIL ============
 def send_email(to_email, subject, html_body):
@@ -379,10 +380,8 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     gr.Markdown("*Your agents don't drop when you do.*")
 
     email_state = gr.State("")
-    name_state = gr.State("")
     chat_state = gr.State(None)
 
-    # -------- LOGIN / REGISTER (always visible) --------
     with gr.Tab("🔐 Login / Register") as login_tab:
         with gr.Row():
             with gr.Column():
@@ -399,20 +398,14 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
                 rg_btn = gr.Button("Register", variant="primary")
                 rg_msg = gr.Textbox(label="Status", interactive=False)
 
-    # -------- DASHBOARD (only after login) --------
     with gr.Tab("🏠 Dashboard", visible=False) as dashboard_tab:
         dash_welcome = gr.Markdown("Welcome!")
-        dash_status = gr.Markdown("Status: -")
 
     with gr.Tab("❤️ I Am Alive", visible=False) as alive_tab:
         gr.Markdown("### Confirm you are alive")
         alive_status = gr.Markdown("Status: -")
         alive_btn = gr.Button("❤️ I Am Alive (Check In)", variant="primary", size="lg")
         alive_msg = gr.Textbox(label="Result", interactive=False)
-        gr.Markdown("### Or chat to prove you are alive")
-        proof_chat = gr.Chatbot(label="Liveness Chat", height=250)
-        proof_input = gr.Textbox(label="Say 'I am alive' or 'Ina raye'")
-        proof_btn = gr.Button("Send")
 
     with gr.Tab("🔐 Vault (Secrets)", visible=False) as vault_tab:
         gr.Markdown("### Store passwords and secrets")
@@ -499,8 +492,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     def do_login(email, pw):
         u = verify_user(email, pw)
         if not u:
-            return ("Invalid credentials.", "", "", 
-                    gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
+            return ("Invalid credentials.", "", gr.update(visible=False), gr.update(visible=False),
                     gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
                     gr.update(visible=False), gr.update(visible=False), gr.update(visible=False),
                     gr.update(visible=False), gr.update(visible=False), gr.update(visible=False))
@@ -508,8 +500,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         status = get_status(email)
         welcome = f"# 👋 Welcome, {u['name']}!\n\n**Your Baton account is active.**\n\nStatus: {status}\n\nUse the tabs above to manage your digital legacy."
         vis = gr.update(visible=True)
-        return (f"Welcome, {u['name']}!", email, welcome,
-                vis, vis, vis, vis, vis, vis, vis, vis, vis, vis, vis, vis)
+        return (f"Welcome, {u['name']}!", email, vis, vis, vis, vis, vis, vis, vis, vis, vis, vis, vis, welcome)
 
     def do_register(name, email, pw):
         if not name or not email or not pw:
@@ -651,12 +642,10 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         return f"Access granted. Welcome, {heir_name}.", personal_md, family_md, test_md, vault_rows
 
     # ===== CONNECT EVENTS =====
-    all_tabs = [dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab, pm_tab, h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab]
-
     li_btn.click(
         do_login,
         [li_email, li_pw],
-        [li_msg, email_state, dash_welcome, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab, pm_tab, h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab]
+        [li_msg, email_state, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab, pm_tab, h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab, dash_welcome]
     )
     rg_btn.click(do_register, [rg_name, rg_email, rg_pw], rg_msg)
 
@@ -679,9 +668,6 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     hc_btn.click(do_heir_unlock, [hc_code], [hc_msg, hc_personal, hc_family, hc_test, hc_vault])
     nc_btn.click(do_notifier_view, [nc_code], [nc_msg, nc_note])
     email_state.change(refresh_status, [email_state], [alive_status])
-    email_state.change(refresh_status, [email_state], [dash_status])
     alive_btn.click(do_checkin, [email_state], [alive_msg])
-    proof_btn.click(do_proof_chat, [proof_input, proof_chat, email_state], [proof_chat, proof_input])
-    proof_input.submit(do_proof_chat, [proof_input, proof_chat, email_state], [proof_chat, proof_input])
 
 demo.launch()
