@@ -147,12 +147,10 @@ def get_vault(owner):
     conn.close()
     return [[r["category"], r["label"], r["secret"]] for r in rows]
 
-# ============ TESTAMENT (with EDIT feature) ============
+# ============ TESTAMENT ============
 def save_testament(owner, title, content):
-    """Save OR update testament. One testament per user (upsert)."""
     conn = get_db()
-    existing = conn.execute("SELECT id FROM testament WHERE owner_email = ? ORDER BY updated_at DESC LIMIT 1",
-                            (owner,)).fetchone()
+    existing = conn.execute("SELECT id FROM testament WHERE owner_email = ? LIMIT 1", (owner,)).fetchone()
     if existing:
         conn.execute("UPDATE testament SET title = ?, content = ?, updated_at = ? WHERE id = ?",
                      (title, content, datetime.now().isoformat(), existing["id"]))
@@ -164,17 +162,15 @@ def save_testament(owner, title, content):
     return "Testament saved!"
 
 def get_testaments(owner):
-    """Get formatted testament for display."""
     conn = get_db()
     r = conn.execute("SELECT title, content, updated_at FROM testament WHERE owner_email = ? ORDER BY updated_at DESC LIMIT 1",
                      (owner,)).fetchone()
     conn.close()
     if not r:
         return "No testament yet."
-    return f"## {r['title']}\n\n{r['content']}\n\n---\n*Last updated: {r['updated_at'][:19]}*"
+    return f"## {r['title']}\n\n{r['content']}\n\n---\nLast updated: {r['updated_at'][:19]}"
 
 def load_testament_for_edit(owner):
-    """Load existing testament into the edit fields."""
     if not owner:
         return "", "", "Please log in first."
     conn = get_db()
@@ -183,7 +179,7 @@ def load_testament_for_edit(owner):
     conn.close()
     if not r:
         return "", "", "No existing testament. Write a new one below and click Save."
-    return r["title"], r["content"], "📥 Loaded! You can now edit and click Save."
+    return r["title"], r["content"], "Loaded! You can now edit and click Save."
 
 # ============ HEIRS ============
 def add_heir(owner, name, relation, contact):
@@ -328,7 +324,7 @@ def send_warnings_and_notify():
                                        (email, level)).fetchone()
                 if not already:
                     send_email(email, f"Baton Warning: {level}",
-                               f"<h2>Hello {name},</h2><p>You have not checked in for {days} days. Please log in and tap 'I Am Alive'.</p>")
+                               f"<h2>Hello {name},</h2><p>You have not checked in for {days} days. Please log in and tap I Am Alive.</p>")
                     conn2 = get_db()
                     conn2.execute("INSERT INTO warnings (owner_email, level, sent_at) VALUES (?, ?, ?)",
                                   (email, level, datetime.now().isoformat()))
@@ -426,7 +422,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     with gr.Tab("❤️ I Am Alive", visible=False) as alive_tab:
         gr.Markdown("### Confirm you are alive")
         alive_status = gr.Markdown("Status: -")
-        alive_btn = gr.Button("❤️ I Am Alive (Check In)", variant="primary", size="lg")
+        alive_btn = gr.Button("I Am Alive (Check In)", variant="primary", size="lg")
         alive_msg = gr.Textbox(label="Result", interactive=False)
 
     with gr.Tab("🔐 Vault (Secrets)", visible=False) as vault_tab:
@@ -440,14 +436,14 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
 
     with gr.Tab("📜 Testament", visible=False) as t_tab:
         gr.Markdown("### Your official will (wasiyya)")
-        gr.Markdown("*💡 **Tip:** Idan ka riga ka rubuta wasiyya, danna **'📥 Load my testament'** don ka gyara ta. Idan ba ka rubuta ba, rubuta sabo sannan ka danna 'Save'."*")
-        t_load = gr.Button("📥 Load my testament (Load existing)", variant="secondary")
+        gr.Markdown("Tip: Idan ka riga ka rubuta wasiyya, danna Load my testament don ka gyara ta. Idan ba ka rubuta ba, rubuta sabo sannan ka danna Save.")
+        t_load = gr.Button("Load my testament", variant="secondary")
         t_title = gr.Textbox(label="Title (Take)")
         t_content = gr.Textbox(label="Content (Abin da ka rubuta)", lines=8)
-        t_save = gr.Button("💾 Save Testament (Ajiye)", variant="primary")
+        t_save = gr.Button("Save Testament (Ajiye)", variant="primary")
         t_status = gr.Textbox(label="Status", interactive=False)
         gr.Markdown("---")
-        gr.Markdown("### 📖 Current Testament (Abin da ke ajiye yanzu)")
+        gr.Markdown("### Current Testament (Abin da ke ajiye yanzu)")
         t_display = gr.Markdown("No testament yet.")
 
     with gr.Tab("👨‍👩‍👧 Family Message", visible=False) as fm_tab:
@@ -524,7 +520,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
                     vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, "Please try again.")
         touch_login(email)
         status = get_status(email)
-        welcome = f"# 👋 Welcome, {u['name']}!\n\n**Your Baton account is active.**\n\nStatus: {status}\n\nUse the tabs above to manage your digital legacy."
+        welcome = f"# Welcome, {u['name']}!\n\nYour Baton account is active.\n\nStatus: {status}\n\nUse the tabs above to manage your digital legacy."
         vis_on = gr.update(visible=True)
         return (f"Welcome, {u['name']}!", email, vis_on, vis_on, vis_on, vis_on, vis_on,
                 vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, welcome)
@@ -596,7 +592,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         row, owner_name = notifier_view(code)
         if not row:
             return "Invalid code.", "No notification."
-        note = f"## Notification from {owner_name}\n\n**To {row['notifier_name']} ({row['notifier_role']}):**\n\n{row['personal_note']}\n\n---\n*{owner_name} has passed away. This is their message to you. You do not have access to their private vault.*"
+        note = f"## Notification from {owner_name}\n\nTo {row['notifier_name']} ({row['notifier_role']}):\n\n{row['personal_note']}\n\n---\n{owner_name} has passed away. This is their message to you. You do not have access to their private vault."
         return "Notification received.", note
 
     @spaces.GPU
@@ -653,9 +649,9 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         vault, test, fam = get_deceased_info(owner)
         vault_rows = [[v["category"], v["label"], v["secret"]] for v in vault]
         personal = get_personal_message(owner, heir_name)
-        personal_md = f"## Personal Message for {heir_name}\n\n{personal}" if personal else "*No personal message.*"
-        family_md = f"## Family Message\n\n{fam[0]['content']}" if fam else "*No family message.*"
-        test_md = f"## Testament\n\n{test[0]['content']}" if test else "*No testament.*"
+        personal_md = f"## Personal Message for {heir_name}\n\n{personal}" if personal else "No personal message."
+        family_md = f"## Family Message\n\n{fam[0]['content']}" if fam else "No family message."
+        test_md = f"## Testament\n\n{test[0]['content']}" if test else "No testament."
         return f"Access granted. Welcome, {heir_name}.", personal_md, family_md, test_md, vault_rows
 
     # ===== CONNECT EVENTS =====
