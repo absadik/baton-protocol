@@ -1,6 +1,6 @@
 import gradio as gr
 import os
-import secrets
+import time
 import hashlib
 import secrets
 import sqlite3
@@ -24,7 +24,7 @@ if GEMINI_API_KEY:
 
 def send_email(to_email, subject, html_body):
     if not RESEND_API_KEY:
-        return False, "RESEND_API_KEY not set"
+        return False, "no key"
     try:
         r = requests.post(
             "https://api.resend.com/emails",
@@ -32,7 +32,7 @@ def send_email(to_email, subject, html_body):
             json={"from": FROM_EMAIL, "to": [to_email], "subject": subject, "html": html_body},
             timeout=10,
         )
-        return (True, "Sent") if r.status_code == 200 else (False, f"Error {r.status_code}: {r.text}")
+        return (True, "Sent") if r.status_code == 200 else (False, str(r.status_code))
     except Exception as e:
         return False, str(e)
 
@@ -87,9 +87,9 @@ def create_user(email, password, name):
         conn.execute("INSERT INTO users (email, password_hash, name, last_login) VALUES (?, ?, ?, ?)",
                      (email, hash_pw(password), name, datetime.now().isoformat()))
         conn.commit()
-        return True, "Account created! Please log in below."
+        return True, "✅ Account created! Now log in below."
     except sqlite3.IntegrityError:
-        return False, "Email already registered."
+        return False, "❌ Email already registered. Try another email."
     finally:
         conn.close()
 
@@ -133,7 +133,7 @@ def get_status(email):
     if days <= 60: return f"SAFE - {days} days"
     if days <= 75: return f"WARNING 1 - {days} days"
     if days <= 85: return f"WARNING 2 - {days} days"
-    if days < 90: return f"CRITICAL - {90 - days} days until inheritance"
+    if days < 90: return f"CRITICAL - {90 - days} days left"
     return f"TRIGGERED - {days} days"
 
 def add_vault(owner, cat, label, secret):
@@ -195,10 +195,7 @@ def get_testaments(owner):
     conn.close()
     if not rows:
         return "No testament yet."
-    parts = []
-    for r in rows:
-        parts.append(f"## {r['title']}\n\n{r['content']}")
-    return "\n\n---\n\n".join(parts)
+    return "\n\n---\n\n".join([f"## {r['title']}\n\n{r['content']}" for r in rows])
 
 def save_attachment(owner, testament_id, file_path, file_type, original_name):
     if not file_path:
@@ -395,7 +392,6 @@ def build_dashboard_html(name, email, status, stats):
                 <b>Status:</b> {status}
             </div>
         </div>
-        
         <h3 style="color: #333; margin: 20px 0 15px 0;">📊 Your Legacy at a Glance</h3>
         <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 25px;">
             <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
@@ -424,37 +420,8 @@ def build_dashboard_html(name, email, status, stats):
                 <div style="font-size: 13px; color: #666;">Attachments</div>
             </div>
         </div>
-        
-        <h3 style="color: #333; margin: 20px 0 15px 0;">⚡ Quick Actions</h3>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px;">
-            <div style="background: #eff6ff; border-left: 4px solid #3b82f6; padding: 15px; border-radius: 10px;">
-                <div style="font-weight: bold; color: #1e40af;">❤️ I Am Alive</div>
-                <div style="font-size: 13px; color: #666; margin-top: 5px;">Confirm you are alive</div>
-            </div>
-            <div style="background: #f0fdf4; border-left: 4px solid #22c55e; padding: 15px; border-radius: 10px;">
-                <div style="font-weight: bold; color: #15803d;">🔐 Vault</div>
-                <div style="font-size: 13px; color: #666; margin-top: 5px;">Store passwords</div>
-            </div>
-            <div style="background: #fef3c7; border-left: 4px solid #f59e0b; padding: 15px; border-radius: 10px;">
-                <div style="font-weight: bold; color: #b45309;">📜 Testament</div>
-                <div style="font-size: 13px; color: #666; margin-top: 5px;">Write multiple wills</div>
-            </div>
-            <div style="background: #fce7f3; border-left: 4px solid #ec4899; padding: 15px; border-radius: 10px;">
-                <div style="font-weight: bold; color: #be185d;">💌 Messages</div>
-                <div style="font-size: 13px; color: #666; margin-top: 5px;">Family & personal</div>
-            </div>
-            <div style="background: #ede9fe; border-left: 4px solid #8b5cf6; padding: 15px; border-radius: 10px;">
-                <div style="font-weight: bold; color: #6d28d9;">👥 Heirs</div>
-                <div style="font-size: 13px; color: #666; margin-top: 5px;">Add your loved ones</div>
-            </div>
-            <div style="background: #ecfeff; border-left: 4px solid #06b6d4; padding: 15px; border-radius: 10px;">
-                <div style="font-weight: bold; color: #0e7490;">🤝 Notifiers</div>
-                <div style="font-size: 13px; color: #666; margin-top: 5px;">Add witnesses</div>
-            </div>
-        </div>
-        
         <div style="margin-top: 25px; padding: 15px; background: #f9fafb; border-radius: 10px; font-size: 13px; color: #666; text-align: center;">
-            💡 Danna kowanne tab a saman shafin don sarrafa abubuwan da ke ciki.
+            💡 Click the tabs above to manage your legacy.
         </div>
     </div>
     """
@@ -480,7 +447,7 @@ def send_warnings_and_notify():
                                        (email, level)).fetchone()
                 if not already:
                     send_email(email, f"Baton Warning: {level}",
-                               f"<h2>Hello {name},</h2><p>You have not checked in for {days} days.</p>")
+                               f"<h2>Hello {name},</h2><p>Please check in.</p>")
                     conn2 = get_db()
                     conn2.execute("INSERT INTO warnings (owner_email, level, sent_at) VALUES (?, ?, ?)",
                                   (email, level, datetime.now().isoformat()))
@@ -501,17 +468,14 @@ def check_liveness(user_email):
     conn = get_db()
     u = conn.execute("SELECT last_login, is_dead FROM users WHERE email = ?", (user_email,)).fetchone()
     conn.close()
-    if not u:
-        return {"status": "error", "message": "User not found"}
-    if u["is_dead"]:
-        return {"status": "triggered", "reason": "deceased"}
+    if not u: return {"status": "error"}
+    if u["is_dead"]: return {"status": "triggered", "reason": "deceased"}
     days = (datetime.now() - datetime.fromisoformat(u["last_login"])).days
-    if days > 90:
-        return {"status": "triggered", "days": days}
+    if days > 90: return {"status": "triggered", "days": days}
     return {"status": "active", "days": days}
 
 def transfer_agent(user_email, agent_name):
-    return {"status": "success", "agent": agent_name, "heir": "designated"}
+    return {"status": "success", "agent": agent_name}
 
 def archive_agent(user_email, agent_name):
     return {"status": "success", "seal_id": f"SEAL-{int(time.time())}"}
@@ -546,49 +510,52 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
     email_state = gr.State("")
     name_state = gr.State("")
     chat_state = gr.State(None)
-welcome_banner = gr.Markdown(
-    "## 👋 Welcome to Baton!\n\n"
-    "**Baton** is the inheritance protocol for autonomous AI agents. "
-    "When you pass away, your AI agents — and your secrets, messages, and wishes — "
-    "are safely transferred to the people you choose.\n\n"
-    "### 🚀 Getting Started\n"
-    "1. **Register** with your name, email, and password\n"
-    "2. **Log in** with your credentials\n"
-    "3. Use the tabs at the top to set up your legacy\n\n"
-    "### 📖 What Each Tab Does\n"
-    "| Tab | Purpose |\n"
-    "|---|---|\n"
-    "| 🔐 Login / Register | Create account or log in |\n"
-    "| 🏠 Dashboard | Your control center |\n"
-    "| ❤️ I Am Alive | Confirm you are alive |\n"
-    "| 🔐 Vault | Store passwords and secrets |\n"
-    "| 📜 Testament | Write multiple wills (like Google Docs) |\n"
-    "| 👨‍👩‍👧 Family Message | One message for all heirs |\n"
-    "| 💌 Personal Message | Individual message for each heir |\n"
-    "| 👥 Heirs | Add children, spouse, parents |\n"
-    "| 🤝 Notifiers | Add witnesses (lawyer, imam, doctor) |\n"
-    "| 💬 Chat | Talk to the AI assistant |\n"
-    "| 💀 Simulate Death | Demo: see inheritance in action |\n"
-    "| 🔑 Heir Portal | Heirs enter their code |\n"
-    "| 🕊️ Notifier Portal | Witnesses enter their code |\n\n"
-    "---"
-)
+    pw_visible = gr.State(False)
+
+    welcome_banner = gr.Markdown(
+        "## 👋 Welcome to Baton!\n\n"
+        "**Baton** is the inheritance protocol for autonomous AI agents.\n\n"
+        "### 🚀 Getting Started\n"
+        "**Step 1:** Fill the **Register** form below (Name, Email, Password) and click **📝 Register**.\n\n"
+        "**Step 2:** Wait for **'✅ Account created!'** — then fill the **Login** form with the same email and click **🔐 Log in**.\n\n"
+        "### 📖 What Each Tab Does\n"
+        "| Tab | Purpose |\n"
+        "|---|---|\n"
+        "| 🔐 Login / Register | Create account or log in |\n"
+        "| 🏠 Dashboard | Your control center |\n"
+        "| ❤️ I Am Alive | Confirm you are alive |\n"
+        "| 🔐 Vault | Store passwords and secrets |\n"
+        "| 📜 Testament | Write multiple wills |\n"
+        "| 👨‍👩‍👧 Family Message | One message for all heirs |\n"
+        "| 💌 Personal Message | Message for each heir |\n"
+        "| 👥 Heirs | Add children, spouse, parents |\n"
+        "| 🤝 Notifiers | Add witnesses |\n"
+        "| 💬 Chat | Talk to AI |\n"
+        "| 💀 Simulate Death | Demo control |\n"
+        "| 🔑 Heir Portal | Heirs enter code |\n"
+        "| 🕊️ Notifier Portal | Witnesses enter code |\n\n"
+        "---"
+    )
 
     with gr.Tabs() as main_tabs:
         with gr.Tab("🔐 Login / Register", id="login") as login_tab:
             with gr.Row():
                 with gr.Column():
                     gr.Markdown("### 🔐 Login")
+                    gr.Markdown("*Already registered? Log in here.*")
                     li_email = gr.Textbox(label="Email")
                     li_pw = gr.Textbox(label="Password", type="password")
-                    li_btn = gr.Button("Log in", variant="primary")
+                    li_show = gr.Checkbox(label="👁️ Show password")
+                    li_btn = gr.Button("🔐 Log in", variant="primary")
                     li_msg = gr.Textbox(label="Status", interactive=False)
                 with gr.Column():
                     gr.Markdown("### 📝 Register")
+                    gr.Markdown("*New here? Create an account first.*")
                     rg_name = gr.Textbox(label="Name")
                     rg_email = gr.Textbox(label="Email")
                     rg_pw = gr.Textbox(label="Password", type="password")
-                    rg_btn = gr.Button("Register", variant="primary")
+                    rg_show = gr.Checkbox(label="👁️ Show password")
+                    rg_btn = gr.Button("📝 Register", variant="primary")
                     rg_msg = gr.Textbox(label="Status", interactive=False)
 
         with gr.Tab("🏠 Dashboard", id="dashboard", visible=False) as dashboard_tab:
@@ -608,13 +575,14 @@ welcome_banner = gr.Markdown(
             v_cat = gr.Dropdown(["Social Media", "Banking", "Email", "Crypto", "Other"], label="Category", value="Social Media")
             v_label = gr.Textbox(label="Label")
             v_secret = gr.Textbox(label="Secret", type="password")
+            v_show = gr.Checkbox(label="👁️ Show secret")
             v_add = gr.Button("Add to Vault", variant="primary")
             v_list = gr.Dataframe(headers=["Category", "Label", "Secret"])
             v_msg = gr.Textbox(label="Status", interactive=False)
 
         with gr.Tab("📜 Testament", id="testament", visible=False) as t_tab:
             gr.Markdown("### 📜 My Testaments (like Google Docs)")
-            t_list = gr.Dataframe(headers=["ID", "Title", "Last Updated"], label="📚 All My Testaments")
+            t_list = gr.Dataframe(headers=["ID", "Title", "Last Updated"])
             with gr.Row():
                 t_new_btn = gr.Button("➕ New", variant="secondary")
                 t_load_btn = gr.Button("📥 Load", variant="primary")
@@ -699,6 +667,9 @@ welcome_banner = gr.Markdown(
             nc_note = gr.Markdown("No notification.")
 
     # ===== HANDLERS =====
+    def toggle_show_password(show):
+        return gr.update(type="text" if show else "password")
+
     def do_login(email, pw):
         u = verify_user(email, pw)
         vis_off = gr.update(visible=False)
@@ -706,9 +677,10 @@ welcome_banner = gr.Markdown(
         banner_off = gr.update(visible=False)
         tab_dash = gr.update(selected="dashboard")
         if not u:
-            return ("❌ Invalid credentials.", "", "", vis_on, vis_off, vis_off, vis_off, vis_off, vis_off,
-                    vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, gr.update(visible=True),
-                    tab_dash, "<p>Login failed.</p>", [], 0, "", "", "", [])
+            return ("❌ Invalid credentials. If you are new, click 📝 Register FIRST, then log in.", "", "",
+                    vis_on, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off,
+                    vis_off, vis_off, gr.update(visible=True), tab_dash, "<p>Please register first.</p>",
+                    [], 0, "", "", "", [])
         touch_login(email)
         status = get_status(email)
         stats = get_dashboard_stats(email)
@@ -722,9 +694,9 @@ welcome_banner = gr.Markdown(
 
     def do_register(name, email, pw):
         if not name or not email or not pw:
-            return "Fill all fields."
+            return "❌ Please fill all fields."
         if len(pw) < 6:
-            return "Password must be 6+."
+            return "❌ Password must be 6+ characters."
         ok, msg = create_user(email, pw, name)
         return msg
 
@@ -733,8 +705,9 @@ welcome_banner = gr.Markdown(
         vis_off = gr.update(visible=False)
         banner_on = gr.update(visible=True)
         tab_login = gr.update(selected="login")
-        return ("✅ Logged out.", "", "", vis_on, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off,
-                vis_off, vis_off, vis_off, vis_off, vis_off, banner_on, tab_login)
+        return ("✅ Logged out. Register (if new) or Log in again.", "", "", vis_on, vis_off, vis_off,
+                vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off,
+                banner_on, tab_login)
 
     def refresh_dashboard(name, email):
         if not email:
@@ -746,9 +719,8 @@ welcome_banner = gr.Markdown(
     def goto(tab_id):
         return gr.update(selected=tab_id)
 
-    # ===== TESTAMENT =====
     def refresh_tests(email): return get_all_testaments(email)
-    def new_testament(): return 0, "", "", "✏️ New testament."
+    def new_testament(): return 0, "", "", "✏️ New testament. Fill and click Save."
     def load_testament(selected_id, email):
         if not email: return 0, "", "", "Please log in."
         if not selected_id or selected_id == 0: return 0, "", "", "Select first."
@@ -757,7 +729,7 @@ welcome_banner = gr.Markdown(
         return t["id"], t["title"], t["content"], f"📥 Loaded: {t['title']}"
     def save_testament_ui(selected_id, email, title, content):
         if not email: return "Please log in.", refresh_tests(email), 0, "", ""
-        if not title or not content: return "Required.", refresh_tests(email), selected_id, title, content
+        if not title or not content: return "Title and content required.", refresh_tests(email), selected_id, title, content
         if selected_id and int(selected_id) > 0:
             update_testament(int(selected_id), email, title, content)
             return f"✅ Updated: {title}", refresh_tests(email), int(selected_id), title, content
@@ -778,7 +750,6 @@ welcome_banner = gr.Markdown(
         if not t: return 0, "", "", ""
         return t["id"], t["title"], t["content"], f"📥 Loaded: {t['title']}"
 
-    # ===== ATTACHMENTS =====
     def do_attach(file_obj, audio_obj, selected_id, email):
         if not email: return "Please log in.", [], []
         if not selected_id or int(selected_id) == 0: return "Select a testament first.", [], []
@@ -787,13 +758,12 @@ welcome_banner = gr.Markdown(
             path = file_obj if isinstance(file_obj, str) else getattr(file_obj, "name", str(file_obj))
             name = os.path.basename(path)
             ext = os.path.splitext(name)[1].lower()
-            ftype = "video" if ext in [".mp4", ".webm", ".mov", ".avi", ".mkv"] else "audio" if ext in [".mp3", ".wav", ".ogg", ".m4a"] else "file"
+            ftype = "video" if ext in [".mp4", ".webm", ".mov"] else "audio" if ext in [".mp3", ".wav"] else "file"
             save_attachment(email, int(selected_id), path, ftype, name)
             saved += 1
         if audio_obj is not None:
             path = audio_obj if isinstance(audio_obj, str) else getattr(audio_obj, "name", str(audio_obj))
-            name = os.path.basename(path)
-            save_attachment(email, int(selected_id), path, "audio", name)
+            save_attachment(email, int(selected_id), path, "audio", os.path.basename(path))
             saved += 1
         if saved == 0: return "No file provided.", [], []
         atts = get_attachments(email, int(selected_id))
@@ -816,7 +786,6 @@ welcome_banner = gr.Markdown(
         choices = [f"{a['id']} - {a['name']} ({a['type']})" for a in atts]
         return "🗑️ Deleted.", rows, choices
 
-    # ===== OTHER =====
     def do_add_vault(email, cat, label, secret):
         if not email: return [], "Please log in."
         if not label or not secret: return get_vault(email), "Required."
@@ -905,6 +874,10 @@ welcome_banner = gr.Markdown(
         return f"✅ Access granted. Welcome, {heir_name}.", personal_md, family_md, test_md, vault_rows, att_rows
 
     # ===== CONNECT =====
+    rg_show.change(toggle_show_password, [rg_show], [rg_pw])
+    li_show.change(toggle_show_password, [li_show], [li_pw])
+    v_show.change(toggle_show_password, [v_show], [v_secret])
+
     li_btn.click(
         do_login,
         [li_email, li_pw],
@@ -921,7 +894,6 @@ welcome_banner = gr.Markdown(
     )
     quick_alive.click(lambda: goto("alive"), [], [main_tabs])
 
-    # Testament events
     t_new_btn.click(new_testament, [], [t_selected_id, t_title, t_content, t_status])
     t_load_btn.click(load_testament, [t_selected_id, email_state], [t_selected_id, t_title, t_content, t_status])
     t_delete_btn.click(delete_testament_ui, [t_selected_id, email_state], [t_status, t_list, t_selected_id, t_title, t_content])
@@ -932,7 +904,6 @@ welcome_banner = gr.Markdown(
     attach_delete.click(do_delete_attachment, [attach_selector, email_state], [attach_msg, attach_list, attach_selector])
     t_selected_id.change(refresh_attachments, [email_state, t_selected_id], [attach_list, attach_selector])
 
-    # Other events
     v_add.click(do_add_vault, [email_state, v_cat, v_label, v_secret], [v_list, v_msg])
     email_state.change(refresh_vault, [email_state], [v_list])
     fm_save.click(do_save_family, [email_state, fm_title, fm_content], [fm_display])
