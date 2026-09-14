@@ -5,6 +5,119 @@ import hashlib
 import secrets
 import sqlite3
 import requests
+import spaces
+import shutil
+from datetime import datetime
+from apscheduler.schedulers.background import BackgroundScheduler
+from huggingface_hub import InferenceClient
+
+HF_TOKEN = os.environ.get("HF_TOKEN", "")
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "")
+FROM_EMAIL = os.environ.get("FROM_EMAIL", "onboarding@resend.dev")
+DB_PATH = "baton.db"
+UPLOAD_DIR = "baton_uploads"
+os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+def send_email(to_email, subject, html_body):
+    if not RESEND_API_KEY:
+        return False, "no key"
+    try:
+        r = requests.post(
+            "https://api.resend.com/emails",
+            headers={"Authorization": f"Bearer {RESEND_API_KEY}", "Content-Type": "application/json"},
+            json={"from": FROM_EMAIL, "to": [to_email], "subject": subject, "html": html_body},
+            timeout=10,
+        )
+        return (True, "Sent") if r.status_code == 200 else (False, str(r.status_code))
+    except Exception as e:
+        return False, str(e)
+
+def get_db():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+def init_db():
+    conn = get_db()
+    c = conn.cursor()
+    c.execute('''CREATE TABLE IF NOT EXISTS users (
+        email TEXT PRIMARY KEY, password_hash TEXT, name TEXT,
+        last_login TEXT, is_dead INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS vault (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT,
+        category TEXT, label TEXT, secret TEXT, created_at TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS testament (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT,
+        title TEXT, content TEXT, updated_at TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS attachments (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT,
+        testament_id INTEGER, file_path TEXT, file_type TEXT, original_name TEXT, uploaded_at TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS heirs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT,
+        heir_name TEXT, heir_relation TEXT, heir_contact TEXT,
+        access_code TEXT, code_used INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS family_message (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT,
+        title TEXT, content TEXT, updated_at TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS personal_messages (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT,
+        heir_name TEXT, content TEXT, updated_at TEXT)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS notifiers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT,
+        notifier_name TEXT, notifier_role TEXT, notifier_contact TEXT,
+        personal_note TEXT, access_code TEXT, code_used INTEGER DEFAULT 0)''')
+    c.execute('''CREATE TABLE IF NOT EXISTS warnings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT, owner_email TEXT,
+        level TEXT, sent_at TEXT)''')
+    conn.commit()
+    conn.close()
+
+init_db()
+
+def hash_pw(pw):
+    return hashlib.sha256(pw.encode()).hexdigest()
+
+def create_user(email, password, name):
+    conn = get_db()
+    try:
+        conn.execute("INSERT INTO users (email, password_hash, name, last_login) VALUES (?, ?, ?, ?)",
+                     (email, hash_pw(password), name, datetime.now().isoformat()))
+        conn.commit()
+        return True, "✅ Account created! Now log in below."
+    except sqlite3.IntegrityError:
+        return False, "❌ Email already registered. Try another email."
+    finally:
+        conn.close()
+
+def verify_user(email, password):
+    conn = get_db()
+    u = conn.execute("SELECT * FROM users WHERE email = ?", (email,)).fetchone()
+    conn.close()
+    if not u or u["password_hash"] != hash_pw(password):
+        return None
+    return u
+
+def touch_login(email):
+    conn = get_db()
+    conn.execute("UPDATE users SET last_login = ?, is_dead = 0 WHERE email = ?",
+                 (datetime.now().isoformat(), email))
+    conn.commit()
+    conn.close()
+
+def mark_dead(owner):
+    conn = get_db()
+    conn.execute("UPDATE users SET is_dead = 1 WHERE email = ?", (owner,))
+    conn.commit()
+    conn.close()
+
+def check_in(email):
+    conn = get_db()
+    conn.execute("UPDATE users SET last_login = ?, is_dead = 0 WHERE email = ?",
+                 (datetime.now().isoformat(), email))
+    conn.commit()
+    conn.close()
+
+def get_status(email):
     conn = get_db()
     u = conn.execute("SELECT last_login, is_dead FROM users WHERE email = ?", (email,)).fetchone()
     conn.close()
@@ -260,51 +373,41 @@ def get_dashboard_stats(email):
 
 def build_dashboard_html(name, email, status, stats):
     return f"""
-    <div style="font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; max-width: 900px; margin: 0 auto; padding: 10px;">
+    <div style="font-family: -apple-system, sans-serif; max-width: 900px; margin: 0 auto; padding: 10px;">
         <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 25px; border-radius: 15px; margin-bottom: 20px;">
-            <div style="display: flex; align-items: center; gap: 15px;">
-                <div style="width: 60px; height: 60px; background: rgba(255,255,255,0.25); border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: bold;">
-                    {name[0].upper() if name else "?"}
-                </div>
-                <div>
-                    <h2 style="margin: 0; font-size: 22px;">👋 Welcome, {name}!</h2>
-                    <p style="margin: 5px 0 0 0; opacity: 0.9; font-size: 14px;">{email}</p>
-                </div>
-            </div>
+            <h2 style="margin: 0; font-size: 22px;">👋 Welcome, {name}!</h2>
+            <p style="margin: 5px 0 0 0; opacity: 0.9; font-size: 14px;">{email}</p>
             <div style="background: rgba(255,255,255,0.2); padding: 10px 15px; border-radius: 10px; margin-top: 15px; font-size: 14px;">
                 <b>Status:</b> {status}
             </div>
         </div>
-        <h3 style="color: #333; margin: 20px 0 15px 0;">📊 Your Legacy at a Glance</h3>
-        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; margin-bottom: 25px;">
+        <h3 style="color: #333;">📊 Your Legacy at a Glance</h3>
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px;">
             <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">🔐</div>
-                <div style="font-size: 26px; font-weight: bold; color: #667eea; margin: 5px 0;">{stats['vault']}</div>
-                <div style="font-size: 13px; color: #666;">Secrets in Vault</div>
+                <div style="font-size: 26px; font-weight: bold; color: #667eea;">{stats['vault']}</div>
+                <div style="font-size: 13px; color: #666;">Secrets</div>
             </div>
             <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">📜</div>
-                <div style="font-size: 26px; font-weight: bold; color: #764ba2; margin: 5px 0;">{stats['testaments']}</div>
+                <div style="font-size: 26px; font-weight: bold; color: #764ba2;">{stats['testaments']}</div>
                 <div style="font-size: 13px; color: #666;">Testaments</div>
             </div>
             <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">👥</div>
-                <div style="font-size: 26px; font-weight: bold; color: #10b981; margin: 5px 0;">{stats['heirs']}</div>
+                <div style="font-size: 26px; font-weight: bold; color: #10b981;">{stats['heirs']}</div>
                 <div style="font-size: 13px; color: #666;">Heirs</div>
             </div>
             <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">🤝</div>
-                <div style="font-size: 26px; font-weight: bold; color: #f59e0b; margin: 5px 0;">{stats['notifiers']}</div>
+                <div style="font-size: 26px; font-weight: bold; color: #f59e0b;">{stats['notifiers']}</div>
                 <div style="font-size: 13px; color: #666;">Notifiers</div>
             </div>
             <div style="background: #fff; border: 1px solid #e5e7eb; border-radius: 12px; padding: 18px; text-align: center;">
                 <div style="font-size: 32px;">📎</div>
-                <div style="font-size: 26px; font-weight: bold; color: #ef4444; margin: 5px 0;">{stats['attachments']}</div>
+                <div style="font-size: 26px; font-weight: bold; color: #ef4444;">{stats['attachments']}</div>
                 <div style="font-size: 13px; color: #666;">Attachments</div>
             </div>
-        </div>
-        <div style="margin-top: 25px; padding: 15px; background: #f9fafb; border-radius: 10px; font-size: 13px; color: #666; text-align: center;">
-            💡 Click the tabs above to manage your legacy.
         </div>
     </div>
     """
@@ -347,6 +450,7 @@ try:
 except Exception as e:
     print(f"Scheduler error: {e}")
 
+# ===== AI TOOLS =====
 def check_liveness(user_email):
     conn = get_db()
     u = conn.execute("SELECT last_login, is_dead FROM users WHERE email = ?", (user_email,)).fetchone()
@@ -367,213 +471,179 @@ def decommission_agent(user_email, agent_name):
     return {"status": "success", "final_log": "keys revoked"}
 
 SYSTEM_PROMPT = """You are Baton, an inheritance protocol for AI agents and digital assets.
-
-Tools:
-- check_liveness(user_email)
-- transfer_agent(user_email, agent_name)
-- archive_agent(user_email, agent_name)
-- decommission_agent(user_email, agent_name)
-
-Be concise."""
-
-model = genai.GenerativeModel(
-    "gemini-1.5-flash",
-    system_instruction=SYSTEM_PROMPT,
-    tools=[check_liveness, transfer_agent, archive_agent, decommission_agent],
-)
+You help users manage their digital legacy. Be concise and helpful.
+Answer questions about: vault secrets, testaments, heirs, notifiers, and inheritance."""
 
 def make_chat():
-    return model.start_chat(enable_automatic_function_calling=True)
+    return InferenceClient(token=HF_TOKEN, model="Qwen/Qwen2.5-1.5B-Instruct")
 
 # ============ UI ============
-with gr.Blocks(title="Baton - Agent Inheritance") as demo:
+with gr.Blocks(title="Baton") as demo:
     gr.Markdown("# 🏛️ Baton")
     gr.Markdown("*Your agents don't drop when you do.*")
 
     email_state = gr.State("")
     name_state = gr.State("")
     chat_state = gr.State(None)
-    pw_visible = gr.State(False)
 
-    welcome_banner = gr.Markdown(
-        "## 👋 Welcome to Baton!\n\n"
-        "**Baton** is the inheritance protocol for autonomous AI agents.\n\n"
-        "### 🚀 Getting Started\n"
-        "**Step 1:** Fill the **Register** form below (Name, Email, Password) and click **📝 Register**.\n\n"
-        "**Step 2:** Wait for **'✅ Account created!'** — then fill the **Login** form with the same email and click **🔐 Log in**.\n\n"
-        "### 📖 What Each Tab Does\n"
-        "| Tab | Purpose |\n"
-        "|---|---|\n"
-        "| 🔐 Login / Register | Create account or log in |\n"
-        "| 🏠 Dashboard | Your control center |\n"
-        "| ❤️ I Am Alive | Confirm you are alive |\n"
-        "| 🔐 Vault | Store passwords and secrets |\n"
-        "| 📜 Testament | Write multiple wills |\n"
-        "| 👨‍👩‍👧 Family Message | One message for all heirs |\n"
-        "| 💌 Personal Message | Message for each heir |\n"
-        "| 👥 Heirs | Add children, spouse, parents |\n"
-        "| 🤝 Notifiers | Add witnesses |\n"
-        "| 💬 Chat | Talk to AI |\n"
-        "| 💀 Simulate Death | Demo control |\n"
-        "| 🔑 Heir Portal | Heirs enter code |\n"
-        "| 🕊️ Notifier Portal | Witnesses enter code |\n\n"
-        "---"
-    )
+    with gr.Column(visible=True) as logged_out_col:
+        welcome_banner = gr.Markdown(
+            "## 👋 Welcome to Baton!\n\n"
+            "**Baton** is the inheritance protocol for autonomous AI agents.\n\n"
+            "### 🚀 Getting Started\n"
+            "**Step 1:** Fill the **Register** form and click **📝 Register**.\n\n"
+            "**Step 2:** Wait for **'✅ Account created!'** — then fill the **Login** form with the **same email** and click **🔐 Log in**.\n\n"
+            "---"
+        )
+        with gr.Row():
+            with gr.Column():
+                gr.Markdown("### 🔐 Login")
+                li_email = gr.Textbox(label="Email")
+                li_pw = gr.Textbox(label="Password", type="password")
+                li_show = gr.Checkbox(label="👁️ Show password")
+                li_btn = gr.Button("🔐 Log in", variant="primary")
+                li_msg = gr.Textbox(label="Status", interactive=False)
+            with gr.Column():
+                gr.Markdown("### 📝 Register")
+                rg_name = gr.Textbox(label="Name")
+                rg_email = gr.Textbox(label="Email")
+                rg_pw = gr.Textbox(label="Password", type="password")
+                rg_show = gr.Checkbox(label="👁️ Show password")
+                rg_btn = gr.Button("📝 Register", variant="primary")
+                rg_msg = gr.Textbox(label="Status", interactive=False)
 
-    with gr.Tabs() as main_tabs:
-        with gr.Tab("🔐 Login / Register", id="login") as login_tab:
-            with gr.Row():
-                with gr.Column():
-                    gr.Markdown("### 🔐 Login")
-                    gr.Markdown("*Already registered? Log in here.*")
-                    li_email = gr.Textbox(label="Email")
-                    li_pw = gr.Textbox(label="Password", type="password")
-                    li_show = gr.Checkbox(label="👁️ Show password")
-                    li_btn = gr.Button("🔐 Log in", variant="primary")
-                    li_msg = gr.Textbox(label="Status", interactive=False)
-                with gr.Column():
-                    gr.Markdown("### 📝 Register")
-                    gr.Markdown("*New here? Create an account first.*")
-                    rg_name = gr.Textbox(label="Name")
-                    rg_email = gr.Textbox(label="Email")
-                    rg_pw = gr.Textbox(label="Password", type="password")
-                    rg_show = gr.Checkbox(label="👁️ Show password")
-                    rg_btn = gr.Button("📝 Register", variant="primary")
-                    rg_msg = gr.Textbox(label="Status", interactive=False)
+    with gr.Column(visible=False) as logged_in_col:
+        with gr.Tabs() as main_tabs:
+            with gr.Tab("🏠 Dashboard", id="dashboard"):
+                dashboard_html = gr.HTML("<p>Loading...</p>")
+                with gr.Row():
+                    quick_alive = gr.Button("❤️ I Am Alive", variant="primary")
+                    quick_logout = gr.Button("🚪 Log out", variant="stop")
+                logout_msg = gr.Textbox(label="Status", interactive=False)
 
-        with gr.Tab("🏠 Dashboard", id="dashboard", visible=False) as dashboard_tab:
-            dashboard_html = gr.HTML("<p>Loading...</p>")
-            with gr.Row():
-                quick_alive = gr.Button("❤️ I Am Alive", variant="primary")
-                quick_logout = gr.Button("🚪 Log out", variant="stop")
+            with gr.Tab("❤️ I Am Alive", id="alive"):
+                gr.Markdown("### Confirm you are alive")
+                alive_status = gr.Markdown("Status: -")
+                alive_btn = gr.Button("❤️ I Am Alive (Check In)", variant="primary", size="lg")
+                alive_msg = gr.Textbox(label="Result", interactive=False)
 
-        with gr.Tab("❤️ I Am Alive", id="alive", visible=False) as alive_tab:
-            gr.Markdown("### Confirm you are alive")
-            alive_status = gr.Markdown("Status: -")
-            alive_btn = gr.Button("❤️ I Am Alive (Check In)", variant="primary", size="lg")
-            alive_msg = gr.Textbox(label="Result", interactive=False)
+            with gr.Tab("🔐 Vault", id="vault"):
+                gr.Markdown("### Store passwords and secrets")
+                v_cat = gr.Dropdown(["Social Media", "Banking", "Email", "Crypto", "Other"], label="Category", value="Social Media")
+                v_label = gr.Textbox(label="Label")
+                v_secret = gr.Textbox(label="Secret", type="password")
+                v_show = gr.Checkbox(label="👁️ Show secret")
+                v_add = gr.Button("Add to Vault", variant="primary")
+                v_list = gr.Dataframe(headers=["Category", "Label", "Secret"])
+                v_msg = gr.Textbox(label="Status", interactive=False)
 
-        with gr.Tab("🔐 Vault", id="vault", visible=False) as vault_tab:
-            gr.Markdown("### Store passwords and secrets")
-            v_cat = gr.Dropdown(["Social Media", "Banking", "Email", "Crypto", "Other"], label="Category", value="Social Media")
-            v_label = gr.Textbox(label="Label")
-            v_secret = gr.Textbox(label="Secret", type="password")
-            v_show = gr.Checkbox(label="👁️ Show secret")
-            v_add = gr.Button("Add to Vault", variant="primary")
-            v_list = gr.Dataframe(headers=["Category", "Label", "Secret"])
-            v_msg = gr.Textbox(label="Status", interactive=False)
+            with gr.Tab("📜 Testament", id="testament"):
+                gr.Markdown("### 📜 My Testaments (like Google Docs)")
+                t_list = gr.Dataframe(headers=["ID", "Title", "Last Updated"])
+                with gr.Row():
+                    t_new_btn = gr.Button("➕ New", variant="secondary")
+                    t_load_btn = gr.Button("📥 Load", variant="primary")
+                    t_delete_btn = gr.Button("🗑️ Delete", variant="stop")
+                t_selected_id = gr.Number(label="Selected ID", value=0, precision=0)
+                t_title = gr.Textbox(label="Title")
+                t_content = gr.Textbox(label="Content", lines=12)
+                t_save = gr.Button("💾 Save", variant="primary")
+                t_status = gr.Textbox(label="Status", interactive=False)
+                gr.Markdown("### 📎 Attachments (Video/Audio)")
+                attach_file = gr.File(label="Upload Video or Audio", file_count="single")
+                attach_audio = gr.Audio(label="Or Record Audio", type="filepath", sources=["microphone", "upload"])
+                attach_btn = gr.Button("📎 Attach", variant="secondary")
+                attach_list = gr.Dataframe(headers=["ID", "File Name", "Type"])
+                attach_selector = gr.Dropdown(label="Delete attachment", choices=[], interactive=True)
+                attach_delete = gr.Button("🗑️ Delete Attachment", variant="stop")
+                attach_msg = gr.Textbox(label="Status", interactive=False)
 
-        with gr.Tab("📜 Testament", id="testament", visible=False) as t_tab:
-            gr.Markdown("### 📜 My Testaments (like Google Docs)")
-            t_list = gr.Dataframe(headers=["ID", "Title", "Last Updated"])
-            with gr.Row():
-                t_new_btn = gr.Button("➕ New", variant="secondary")
-                t_load_btn = gr.Button("📥 Load", variant="primary")
-                t_delete_btn = gr.Button("🗑️ Delete", variant="stop")
-            t_selected_id = gr.Number(label="Selected ID", value=0, precision=0)
-            gr.Markdown("### ✏️ Editor")
-            t_title = gr.Textbox(label="Title")
-            t_content = gr.Textbox(label="Content", lines=12)
-            t_save = gr.Button("💾 Save", variant="primary")
-            t_status = gr.Textbox(label="Status", interactive=False)
-            gr.Markdown("---")
-            gr.Markdown("### 📎 Attachments (Video/Audio)")
-            attach_file = gr.File(label="Upload Video or Audio", file_count="single")
-            attach_audio = gr.Audio(label="Or Record Audio", type="filepath", sources=["microphone", "upload"])
-            attach_btn = gr.Button("📎 Attach", variant="secondary")
-            attach_list = gr.Dataframe(headers=["ID", "File Name", "Type"])
-            attach_selector = gr.Dropdown(label="Delete attachment", choices=[], interactive=True)
-            attach_delete = gr.Button("🗑️ Delete Attachment", variant="stop")
-            attach_msg = gr.Textbox(label="Status", interactive=False)
+            with gr.Tab("👨‍👩‍👧 Family Message", id="family"):
+                gr.Markdown("### ONE message for ALL heirs")
+                fm_title = gr.Textbox(label="Title")
+                fm_content = gr.Textbox(label="Message", lines=6)
+                fm_save = gr.Button("Save", variant="primary")
+                fm_display = gr.Markdown("No family message yet.")
 
-        with gr.Tab("👨‍👩‍👧 Family Message", id="family", visible=False) as fm_tab:
-            gr.Markdown("### ONE message for ALL heirs")
-            fm_title = gr.Textbox(label="Title")
-            fm_content = gr.Textbox(label="Message", lines=6)
-            fm_save = gr.Button("Save", variant="primary")
-            fm_display = gr.Markdown("No family message yet.")
+            with gr.Tab("💌 Personal Message", id="personal"):
+                gr.Markdown("### Different message for each heir")
+                pm_heir = gr.Dropdown(label="Choose heir", choices=[], interactive=True)
+                pm_content = gr.Textbox(label="Message", lines=5)
+                pm_save = gr.Button("Save", variant="primary")
+                pm_refresh = gr.Button("🔄 Refresh")
+                pm_msg = gr.Textbox(label="Status", interactive=False)
+                pm_all = gr.Dataframe(headers=["Heir", "Message"])
 
-        with gr.Tab("💌 Personal Message", id="personal", visible=False) as pm_tab:
-            gr.Markdown("### Different message for each heir")
-            pm_heir = gr.Dropdown(label="Choose heir", choices=[], interactive=True)
-            pm_content = gr.Textbox(label="Message", lines=5)
-            pm_save = gr.Button("Save", variant="primary")
-            pm_refresh = gr.Button("🔄 Refresh")
-            pm_msg = gr.Textbox(label="Status", interactive=False)
-            pm_all = gr.Dataframe(headers=["Heir", "Message"])
+            with gr.Tab("👥 Heirs", id="heirs"):
+                gr.Markdown("### Add heirs")
+                h_name = gr.Textbox(label="Full Name")
+                h_role = gr.Dropdown(
+                    ["Spouse (Mata/Miji)", "Son (Daa)", "Daughter (Ya)", "Mother (Uwa)",
+                     "Father (Uba)", "Brother", "Sister", "Other"],
+                    label="Relationship", value="Daughter (Ya)")
+                h_contact = gr.Textbox(label="Email or Phone")
+                h_add = gr.Button("Add Heir", variant="primary")
+                h_list = gr.Dataframe(headers=["Name", "Relationship", "Contact", "Code", "Status"])
+                h_msg = gr.Textbox(label="Status", interactive=False)
 
-        with gr.Tab("👥 Heirs", id="heirs", visible=False) as h_tab:
-            gr.Markdown("### Add heirs")
-            h_name = gr.Textbox(label="Full Name")
-            h_role = gr.Dropdown(
-                ["Spouse (Mata/Miji)", "Son (Daa)", "Daughter (Ya)", "Mother (Uwa)",
-                 "Father (Uba)", "Brother", "Sister", "Other"],
-                label="Relationship", value="Daughter (Ya)")
-            h_contact = gr.Textbox(label="Email or Phone")
-            h_add = gr.Button("Add Heir", variant="primary")
-            h_list = gr.Dataframe(headers=["Name", "Relationship", "Contact", "Code", "Status"])
-            h_msg = gr.Textbox(label="Status", interactive=False)
+            with gr.Tab("🤝 Notifiers", id="notifiers"):
+                gr.Markdown("### People to NOTIFY (they see ONLY a note)")
+                n_name = gr.Textbox(label="Their Name")
+                n_role = gr.Dropdown(["Lawyer", "Imam", "Pastor", "Doctor", "Friend", "Other"], label="Role", value="Imam")
+                n_contact = gr.Textbox(label="Contact")
+                n_note = gr.Textbox(label="Personal note", lines=4)
+                n_add = gr.Button("Add Notifier", variant="primary")
+                n_list = gr.Dataframe(headers=["Name", "Role", "Contact", "Code", "Status"])
+                n_msg = gr.Textbox(label="Status", interactive=False)
 
-        with gr.Tab("🤝 Notifiers", id="notifiers", visible=False) as n_tab:
-            gr.Markdown("### People to NOTIFY (they see ONLY a note)")
-            n_name = gr.Textbox(label="Their Name")
-            n_role = gr.Dropdown(["Lawyer", "Imam", "Pastor", "Doctor", "Friend", "Other"], label="Role", value="Imam")
-            n_contact = gr.Textbox(label="Contact")
-            n_note = gr.Textbox(label="Personal note", lines=4)
-            n_add = gr.Button("Add Notifier", variant="primary")
-            n_list = gr.Dataframe(headers=["Name", "Role", "Contact", "Code", "Status"])
-            n_msg = gr.Textbox(label="Status", interactive=False)
+            with gr.Tab("💬 Chat", id="chat"):
+                chatbot = gr.Chatbot(label="Baton", height=350)
+                chat_in = gr.Textbox(label="Message")
+                chat_btn = gr.Button("Send", variant="primary")
 
-        with gr.Tab("💬 Chat", id="chat", visible=False) as chat_tab:
-            chatbot = gr.Chatbot(label="Baton", height=350)
-            chat_in = gr.Textbox(label="Message")
-            chat_btn = gr.Button("Send", variant="primary")
+            with gr.Tab("💀 Simulate Death", id="simulate"):
+                sim_btn = gr.Button("Simulate Death", variant="stop")
+                sim_msg = gr.Textbox(label="Result", interactive=False)
 
-        with gr.Tab("💀 Simulate Death", id="simulate", visible=False) as sim_tab:
-            sim_btn = gr.Button("Simulate Death", variant="stop")
-            sim_msg = gr.Textbox(label="Result", interactive=False)
+            with gr.Tab("🔑 Heir Portal", id="heir"):
+                hc_code = gr.Textbox(label="Access Code")
+                hc_btn = gr.Button("Unlock", variant="primary")
+                hc_msg = gr.Textbox(label="Status", interactive=False)
+                hc_personal = gr.Markdown("No personal message.")
+                hc_family = gr.Markdown("No family message.")
+                hc_test = gr.Markdown("No testament.")
+                hc_vault = gr.Dataframe(headers=["Category", "Label", "Secret"])
+                hc_attachments = gr.Dataframe(headers=["File Name", "Type"])
 
-        with gr.Tab("🔑 Heir Portal", id="heir", visible=False) as hc_tab:
-            hc_code = gr.Textbox(label="Access Code")
-            hc_btn = gr.Button("Unlock", variant="primary")
-            hc_msg = gr.Textbox(label="Status", interactive=False)
-            hc_personal = gr.Markdown("No personal message.")
-            hc_family = gr.Markdown("No family message.")
-            hc_test = gr.Markdown("No testament.")
-            hc_vault = gr.Dataframe(headers=["Category", "Label", "Secret"])
-            hc_attachments = gr.Dataframe(headers=["File Name", "Type"])
-
-        with gr.Tab("🕊️ Notifier Portal", id="notifier", visible=False) as nc_tab:
-            nc_code = gr.Textbox(label="Code")
-            nc_btn = gr.Button("View", variant="primary")
-            nc_msg = gr.Textbox(label="Status", interactive=False)
-            nc_note = gr.Markdown("No notification.")
+            with gr.Tab("🕊️ Notifier Portal", id="notifier"):
+                nc_code = gr.Textbox(label="Code")
+                nc_btn = gr.Button("View", variant="primary")
+                nc_msg = gr.Textbox(label="Status", interactive=False)
+                nc_note = gr.Markdown("No notification.")
 
     # ===== HANDLERS =====
-    def toggle_show_password(show):
+    def toggle_show(show):
         return gr.update(type="text" if show else "password")
+
+    rg_show.change(toggle_show, [rg_show], [rg_pw])
+    li_show.change(toggle_show, [li_show], [li_pw])
+    v_show.change(toggle_show, [v_show], [v_secret])
 
     def do_login(email, pw):
         u = verify_user(email, pw)
-        vis_off = gr.update(visible=False)
-        vis_on = gr.update(visible=True)
-        banner_off = gr.update(visible=False)
-        tab_dash = gr.update(selected="dashboard")
         if not u:
-            return ("❌ Invalid credentials. If you are new, click 📝 Register FIRST, then log in.", "", "",
-                    vis_on, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off,
-                    vis_off, vis_off, gr.update(visible=True), tab_dash, "<p>Please register first.</p>",
-                    [], 0, "", "", "", [])
+            return ("❌ Invalid credentials. If you are new, click 📝 Register FIRST, then log in.",
+                    email, "", gr.update(visible=True), gr.update(visible=False),
+                    "<p>Please register first.</p>", [], 0, "", "", gr.update(selected="dashboard"))
         touch_login(email)
         status = get_status(email)
         stats = get_dashboard_stats(email)
         html = build_dashboard_html(u["name"], email, status, stats)
         tests = get_all_testaments(email)
-        atts = get_attachments(email)
-        att_choices = [f"{a['id']} - {a['name']} ({a['type']})" for a in atts]
-        return (f"✅ Welcome, {u['name']}!", email, u["name"], vis_off, vis_on, vis_on, vis_on, vis_on,
-                vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, vis_on, banner_off, tab_dash, html,
-                tests, 0, "", "", "", att_choices)
+        return (f"✅ Welcome, {u['name']}!",
+                email, u["name"],
+                gr.update(visible=False), gr.update(visible=True),
+                html, tests, 0, "", "", gr.update(selected="dashboard"))
 
     def do_register(name, email, pw):
         if not name or not email or not pw:
@@ -584,13 +654,10 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         return msg
 
     def do_logout():
-        vis_on = gr.update(visible=True)
-        vis_off = gr.update(visible=False)
-        banner_on = gr.update(visible=True)
-        tab_login = gr.update(selected="login")
-        return ("✅ Logged out. Register (if new) or Log in again.", "", "", vis_on, vis_off, vis_off,
-                vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off, vis_off,
-                banner_on, tab_login)
+        return ("✅ Logged out. Register (if new) or Log in again.",
+                "", "",
+                gr.update(visible=True), gr.update(visible=False),
+                "<p>Logged out.</p>", [], 0, "", "", gr.update(selected="dashboard"))
 
     def refresh_dashboard(name, email):
         if not email:
@@ -603,7 +670,7 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         return gr.update(selected=tab_id)
 
     def refresh_tests(email): return get_all_testaments(email)
-    def new_testament(): return 0, "", "", "✏️ New testament. Fill and click Save."
+    def new_testament(): return 0, "", "", "✏️ New testament."
     def load_testament(selected_id, email):
         if not email: return 0, "", "", "Please log in."
         if not selected_id or selected_id == 0: return 0, "", "", "Select first."
@@ -705,18 +772,25 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         if not row: return "Invalid code.", "No notification."
         note = f"## Notification from {owner_name}\n\nTo {row['notifier_name']} ({row['notifier_role']}):\n\n{row['personal_note']}"
         return "✅ Received.", note
-    @spaces.GPU
+
     def do_chat(msg, hist, email, sess):
         if not email:
             hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": "Please log in."}]
             return hist, ""
-        if sess is None: sess = make_chat()
+        if not HF_TOKEN:
+            hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": "⚠️ HF_TOKEN not configured. Add it in Space Settings → Secrets."}]
+            return hist, ""
+        if sess is None:
+            sess = make_chat()
         try:
-            r = sess.send_message(msg)
-            hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": r.text}]
+            messages = [{"role": "user", "content": msg}]
+            response = sess.chat_completion(messages, max_tokens=300, temperature=0.7)
+            reply = response.choices[0].message.content
+            hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": reply}]
         except Exception as e:
             hist = hist + [{"role": "user", "content": msg}, {"role": "assistant", "content": f"Error: {e}"}]
         return hist, ""
+
     def do_simulate_death(email):
         if not email: return "Please log in."
         mark_dead(email)
@@ -757,23 +831,18 @@ with gr.Blocks(title="Baton - Agent Inheritance") as demo:
         return f"✅ Access granted. Welcome, {heir_name}.", personal_md, family_md, test_md, vault_rows, att_rows
 
     # ===== CONNECT =====
-    rg_show.change(toggle_show_password, [rg_show], [rg_pw])
-    li_show.change(toggle_show_password, [li_show], [li_pw])
-    v_show.change(toggle_show_password, [v_show], [v_secret])
-
     li_btn.click(
         do_login,
         [li_email, li_pw],
-        [li_msg, email_state, name_state, login_tab, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab,
-         pm_tab, h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab, welcome_banner, main_tabs, dashboard_html,
-         t_list, t_selected_id, t_title, t_content, attach_selector]
+        [li_msg, email_state, name_state, logged_out_col, logged_in_col,
+         dashboard_html, t_list, t_selected_id, t_title, t_content, main_tabs]
     )
     rg_btn.click(do_register, [rg_name, rg_email, rg_pw], rg_msg)
     quick_logout.click(
         do_logout,
         [],
-        [li_msg, email_state, name_state, login_tab, dashboard_tab, alive_tab, vault_tab, t_tab, fm_tab,
-         pm_tab, h_tab, n_tab, chat_tab, sim_tab, hc_tab, nc_tab, welcome_banner, main_tabs]
+        [logout_msg, email_state, name_state, logged_out_col, logged_in_col,
+         dashboard_html, t_list, t_selected_id, t_title, t_content, main_tabs]
     )
     quick_alive.click(lambda: goto("alive"), [], [main_tabs])
 
